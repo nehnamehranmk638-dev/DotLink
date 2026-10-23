@@ -1,10 +1,12 @@
 import json
 import uuid
+import datetime
 from typing import Dict, Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.db import get_db
 from app.deps import get_current_parent, verify_child_ownership, verify_topic_ownership
-from app.models.schemas import SessionStartResumeRequest
+from app.models.schemas import SessionStartResumeRequest, QuizSubmitRequest, QuizSubmitResponse
+from app.services.mastery_gate import evaluate_mastery_submission
 
 router = APIRouter(tags=["play"])
 
@@ -270,6 +272,129 @@ async def get_session_details(id: str, parent: dict = Depends(get_current_parent
             "in_video_questions": in_video_questions,
             "mini_game_config": mini_game
         }
+    finally:
+        await db.close()
+
+@router.get("/sessions/{id}/quiz-questions")
+async def get_quiz_questions(
+    id: str,
+    quiz_set: str = "quiz_a",
+    parent: dict = Depends(get_current_parent)
+):
+    """Fetches the 10 multiple-choice questions for Quiz Set A or Set B."""
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            SELECT s.*, c.parent_id FROM sessions s
+            JOIN children c ON s.child_id = c.id
+            WHERE s.id = ?
+        """, (id,))
+        session = await cursor.fetchone()
+        if not session or session["parent_id"] != parent["id"]:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        cursor = await db.execute("""
+            SELECT id, question_data, correct_answer, hint_text, explanation_text, source_page
+            FROM questions
+            WHERE topic_id = ? AND question_type = ?
+            ORDER BY created_at ASC
+        """, (session["topic_id"], quiz_set))
+        rows = await cursor.fetchall()
+
+        result = []
+        for r in rows:
+            q_data = json.loads(r["question_data"])
+            result.append({
+                "id": r["id"],
+                "question_text": q_data.get("question_text", ""),
+                "options": q_data.get("options", []),
+                "correct_answer": r["correct_answer"],
+                "hint_text": r["hint_text"],
+                "explanation_text": r["explanation_text"],
+                "source_page": r["source_page"]
+            })
+        return result
+    finally:
+        await db.close()
+
+@router.post("/api/sessions/{id}/quiz-submit", response_model=QuizSubmitResponse)
+async def submit_quiz(
+    id: str,
+    req: QuizSubmitRequest,
+    parent: dict = Depends(get_current_parent)
+):
+    """
+    Submits and grades Quiz Set A or Quiz Set B with the deterministic 7/10 Mastery Gate.
+    """
+    db = await get_db()
+    try:
+        cursor = await db.execute("""
+            SELECT s.*, c.parent_id, c.id as child_id, c.total_stars
+            FROM sessions s
+            JOIN children c ON s.child_id = c.id
+            WHERE s.id = ?
+        """, (id,))
+        session = await cursor.fetchone()
+        if not session or session["parent_id"] != parent["id"]:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Load questions for this topic and quiz set
+        cursor = await db.execute("""
+            SELECT id, question_data, correct_answer, hint_text, explanation_text, source_page
+            FROM questions
+            WHERE topic_id = ? AND question_type = ?
+        """, (session["topic_id"], req.quiz_set))
+        q_rows = await cursor.fetchall()
+        questions_map = {}
+        for r in q_rows:
+            q_data = json.loads(r["question_data"])
+            questions_map[r["id"]] = {
+                "question_text": q_data.get("question_text", ""),
+                "options": q_data.get("options", []),
+                "correct_answer": r["correct_answer"],
+                "hint_text": r["hint_text"],
+                "explanation_text": r["explanation_text"],
+                "source_page": r["source_page"]
+            }
+
+        # Load revision bullets
+        cursor = await db.execute("SELECT revision_bullets_json FROM lesson_bundles WHERE topic_id = ?", (session["topic_id"],))
+        b_row = await cursor.fetchone()
+        all_bullets = json.loads(b_row["revision_bullets_json"]) if b_row else []
+
+        eval_result = evaluate_mastery_submission(
+            quiz_set=req.quiz_set,
+            answers=req.answers,
+            questions_map=questions_map,
+            all_revision_bullets=all_bullets
+        )
+
+        # Record quiz submission
+        sub_id = str(uuid.uuid4())
+        await db.execute("""
+            INSERT INTO quiz_submissions (id, session_id, quiz_set, score_out_of_10, passed)
+            VALUES (?, ?, ?, ?, ?)
+        """, (sub_id, id, req.quiz_set, eval_result["score_out_of_10"], 1 if eval_result["passed"] else 0))
+
+        if eval_result["passed"]:
+            # Award mastery bonus stars
+            await db.execute("""
+                UPDATE children SET total_stars = total_stars + ? WHERE id = ?
+            """, (eval_result["bonus_stars"], session["child_id"]))
+            # Mark session completed
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            await db.execute("""
+                UPDATE sessions SET status = 'completed', ended_at = ? WHERE id = ?
+            """, (now_iso, id))
+        elif req.quiz_set == "quiz_b":
+            # Retest Set B failed -> Mark session completed (leaves topic unmastered)
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            await db.execute("""
+                UPDATE sessions SET status = 'completed', ended_at = ? WHERE id = ?
+            """, (now_iso, id))
+
+        await db.commit()
+        return QuizSubmitResponse(**eval_result)
     finally:
         await db.close()
 
