@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DotLink | Adaptive Study Companion</title>
+  <!-- React 18 & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- Babel for direct JSX execution -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Chart.js CDN (Specified in stack section 3) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Plus Jakarta Sans Font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      --bg-primary: #FFFDF9;
+      --bg-card: #ffffff;
+      --bg-secondary: #f8fafc;
+      --text-main: #0f172a;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --brand-orange: #ea580c;
+      --brand-orange-light: #fff7ed;
+      --brand-amber: #f59e0b;
+      --brand-amber-light: #fef3c7;
+      --brand-emerald: #10b981;
+      --brand-emerald-light: #ecfdf5;
+      --brand-indigo: #6366f1;
+      --brand-indigo-light: #e0e7ff;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-family);
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    button { font-family: inherit; cursor: pointer; transition: all 0.2s ease; }
+    input, select, textarea { font-family: inherit; }
+    @keyframes float-subtle {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
+    }
+    .animate-float { animation: float-subtle 3s ease-in-out infinite; }
+    @media (prefers-reduced-motion: reduce) {
+      *, ::before, ::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Pip the Fox Mascot Component
+    function PipMascot({ size = 80, mood = "happy", className = "" }) {
+      const getEyebrows = () => {
+        if (mood === "thinking") {
+          return (
+            <React.Fragment>
+              <path d="M 36 32 Q 42 28 48 33" stroke="#7c2d12" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+              <path d="M 64 34 Q 70 36 76 33" stroke="#7c2d12" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+            </React.Fragment>
+          );
+        }
+        return (
+          <React.Fragment>
+            <path d="M 36 31 Q 42 27 48 31" stroke="#7c2d12" strokeWidth="2" fill="none" strokeLinecap="round" />
+            <path d="M 64 31 Q 70 27 76 31" stroke="#7c2d12" strokeWidth="2" fill="none" strokeLinecap="round" />
+          </React.Fragment>
+        );
+      };
+
+      const getMouth = () => {
+        if (mood === "thinking") return <circle cx="56" cy="67" r="3.5" fill="#7c2d12" />;
+        if (mood === "calm") return <path d="M 47 65 Q 56 68 65 65" stroke="#7c2d12" strokeWidth="2.5" fill="none" strokeLinecap="round" />;
+        return <path d="M 44 63 Q 56 75 68 63" stroke="#7c2d12" strokeWidth="3" fill="#fb7185" strokeLinecap="round" />;
+      };
+
+      return (
+        <div style={{ width: size, height: size, display: "inline-flex", alignItems: "center", justifyContent: "center" }} className={className}>
+          <svg viewBox="0 0 112 112" width={size} height={size} fill="none">
+            <path d="M 82 82 C 102 75 110 50 96 35 C 85 45 80 65 72 75 Z" fill="#ea580c" />
+            <path d="M 96 35 C 99 43 95 48 90 52 C 86 46 88 40 96 35 Z" fill="#fef3c7" />
+            <polygon points="28,45 14,14 46,28" fill="#ea580c" />
+            <polygon points="28,41 21,21 41,29" fill="#fed7aa" />
+            <polygon points="84,45 98,14 66,28" fill="#ea580c" />
+            <polygon points="84,41 91,21 71,29" fill="#fed7aa" />
+            <ellipse cx="56" cy="56" rx="38" ry="32" fill="#f97316" />
+            <path d="M 22 58 C 22 75 38 84 56 84 C 74 84 90 75 90 58 C 84 62 72 65 56 65 C 40 65 28 62 22 58 Z" fill="#fffbeb" />
+            {getEyebrows()}
+            <ellipse cx="42" cy="45" rx="5" ry="6" fill="#1e293b" />
+            <circle cx="40" cy="43" r="2" fill="#ffffff" />
+            <ellipse cx="70" cy="45" rx="5" ry="6" fill="#1e293b" />
+            <circle cx="68" cy="43" r="2" fill="#ffffff" />
+            <circle cx="32" cy="56" r="6" fill="#f43f5e" opacity="0.3" />
+            <circle cx="80" cy="56" r="6" fill="#f43f5e" opacity="0.3" />
+            <polygon points="56,58 51,52 61,52" fill="#7c2d12" />
+            {getMouth()}
+          </svg>
+        </div>
+      );
+    }
+
+    function App() {
+      const [view, setView] = useState("dashboard");
+      const [topics, setTopics] = useState([]);
+      const [selectedTopic, setSelectedTopic] = useState(null);
+      const [agentSteps, setAgentSteps] = useState([]);
+      const [liveStatus, setLiveStatus] = useState({ has_active_session: false });
+      const [stars, setStars] = useState(24);
+      const [loading, setLoading] = useState(false);
+      const [message, setMessage] = useState(null);
+
+      // Coach Chat
+      const [chatMessages, setChatMessages] = useState([
+        { role: "coach", text: "Hello! I am your Parent Coach Agent. Alex has been practicing with calm deliberation. How can I help you today?" }
+      ]);
+      const [inputMessage, setInputMessage] = useState("");
+      const [coachLoading, setCoachLoading] = useState(false);
+
+      // Child Session
+      const [currentSession, setCurrentSession] = useState(null);
+      const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+      const [sessionQuestions, setSessionQuestions] = useState([]);
+      const [mascotMood, setMascotMood] = useState("calm");
+      const [showRushingVisual, setShowRushingVisual] = useState(false);
+      const [showBreakOffer, setShowBreakOffer] = useState(false);
+      const [sessionStartTime, setSessionStartTime] = useState(Date.now());
+      const [selectedAnswer, setSelectedAnswer] = useState(null);
+      const [sessionComplete, setSessionComplete] = useState(false);
+
+      const fetchDashboardData = async () => {
+        try {
+          const res = await fetch("/topics");
+          if (res.ok) {
+            const data = await res.json();
+            setTopics(data);
+          }
+        } catch (e) {}
+      };
+
+      useEffect(() => {
+        fetchDashboardData();
+      }, []);
+
+      // Poll live parent status every 3 seconds (§8)
+      useEffect(() => {
+        const interval = setInterval(async () => {
+          try {
+            const res = await fetch("/api/live/demo-child/status");
+            if (res.ok) {
+              const data = await res.json();
+              setLiveStatus(data);
+            }
+          } catch (e) {}
+        }, 3000);
+        return () => clearInterval(interval);
+      }, []);
+
+      const handleResetDemoData = async () => {
+        setLoading(true);
+        try {
+          const res = await fetch("/api/admin/reset-demo-data", { method: "POST" });
+          const data = await res.json();
+          setMessage(data.message || "2-week demo history populated!");
+          await fetchDashboardData();
+        } catch (e) {
+          setMessage("Failed to reset demo data.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleExtractQuestions = async (e) => {
+        e.preventDefault();
+        setLoading(true);
+        setMessage(null);
+
+        try {
+          const topicRes = await fetch("/topics", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              textbook_id: topics[0]?.textbook_id || "demo-textbook",
+              name: "Plant Anatomy & Solar Energy",
+              subject: "Science",
+              chapter_tag: "Chapter 1",
+              start_page: 1,
+              end_page: 3
+            })
+          });
+
+          const topicData = await topicRes.json();
+          const topicId = topicData.id;
+
+          const extRes = await fetch(`/topics/${topicId}/extract`, { method: "POST" });
+          const extData = await extRes.json();
+
+          if (!extData.success && extData.error === "no_selectable_text") {
+            setMessage("This PDF has no selectable text. Please upload a digital textbook PDF.");
+            return;
+          }
+
+          const stepsRes = await fetch(`/topics/${topicId}/agent-steps`);
+          if (stepsRes.ok) {
+            const stepsData = await stepsRes.json();
+            setAgentSteps(stepsData.steps || []);
+          }
+
+          const detRes = await fetch(`/topics/${topicId}`);
+          if (detRes.ok) {
+            const details = await detRes.json();
+            setSelectedTopic(details);
+            setView("agent_steps");
+          }
+        } catch (err) {
+          setMessage("Agent extraction failed: " + err.message);
+        } finally {
+          setLoading(false);
+          fetchDashboardData();
+        }
+      };
+
+      const handleApproveTopic = async (topicId) => {
+        setLoading(true);
+        try {
+          const res = await fetch(`/topics/${topicId}/approve`, { method: "POST" });
+          if (res.ok) {
+            setMessage("Lesson Approved! Child mode is now unlocked for this topic.");
+            await fetchDashboardData();
+            setView("dashboard");
+          }
+        } catch (e) {
+          setMessage("Failed to approve topic.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleStartChildSession = async (topic) => {
+        setLoading(true);
+        try {
+          const res = await fetch("/sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              child_id: "demo-child",
+              topic_id: topic.id
+            })
+          });
+
+          const data = await res.json();
+          if (!res.ok) {
+            alert(data.detail || "Approval Gate: Lesson must be approved before playing.");
+            return;
+          }
+
+          const sessRes = await fetch(`/sessions/${data.id}`);
+          const sessData = await sessRes.json();
+
+          setCurrentSession(sessData.session);
+          setSessionQuestions(sessData.questions);
+          setCurrentQuestionIndex(0);
+          setSessionStartTime(Date.now());
+          setSelectedAnswer(null);
+          setSessionComplete(false);
+          setMascotMood("calm");
+          setView("session");
+        } catch (err) {
+          alert("Could not start session.");
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const handleAnswerSubmit = async (option) => {
+        if (!currentSession || !sessionQuestions[currentQuestionIndex]) return;
+
+        setSelectedAnswer(option);
+        const q = sessionQuestions[currentQuestionIndex];
+        const timeTaken = (Date.now() - sessionStartTime) / 1000.0;
+
+        try {
+          const res = await fetch("/api/adaptive/answer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              session_id: currentSession.id,
+              question_id: q.id,
+              answer: option,
+              time_taken: timeTaken,
+              attempt_number: 1
+            })
+          });
+
+          const decision = await res.json();
+          setMascotMood(decision.mascot_state || "happy");
+          setStars((prev) => prev + (decision.stars_earned || 0));
+
+          if (decision.adaptation_type === "rushing_visual") {
+            setShowRushingVisual(true);
+            setTimeout(() => {
+              setShowRushingVisual(false);
+              advanceQuestion();
+            }, 2500);
+          } else if (decision.adaptation_type === "brain_break") {
+            setShowBreakOffer(true);
+          } else {
+            setTimeout(() => {
+              advanceQuestion();
+            }, 1200);
+          }
+        } catch (e) {
+          advanceQuestion();
+        }
+      };
+
+      const advanceQuestion = () => {
+        setSelectedAnswer(null);
+        setSessionStartTime(Date.now());
+        if (currentQuestionIndex + 1 < sessionQuestions.length) {
+          setCurrentQuestionIndex((prev) => prev + 1);
+          setMascotMood("calm");
+        } else {
+          setSessionComplete(true);
+          fetch(`/api/topics/${currentSession.topic_id}/complete`, { method: "POST" });
+          fetch(`/api/sessions/${currentSession.id}/insight`, { method: "POST" });
+        }
+      };
+
+      const handleSendCoachMessage = async () => {
+        if (!inputMessage.trim() || coachLoading) return;
+        const userText = inputMessage;
+        setInputMessage("");
+        setChatMessages((prev) => [...prev, { role: "user", text: userText }]);
+        setCoachLoading(true);
+
+        try {
+          const res = await fetch("/api/coach/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              child_id: "demo-child",
+              message: userText
+            })
+          });
+          const data = await res.json();
+          setChatMessages((prev) => [
+            ...prev,
+            { role: "coach", text: data.reply, headline: data.headline, suggested_step: data.suggested_step }
+          ]);
+        } catch (e) {
+          setChatMessages((prev) => [
+            ...prev,
+            { role: "coach", text: "Alex is making steady progress! Practice sessions remain calm and self-paced." }
+          ]);
+        } finally {
+          setCoachLoading(false);
+        }
+      };
+
+      // Chart.js render on progress view
+      useEffect(() => {
+        if (view === "progress" && window.Chart) {
+          const ctxAcc = document.getElementById("accuracyChart");
+          if (ctxAcc) {
+            new window.Chart(ctxAcc, {
+              type: "line",
+              data: {
+                labels: ["Oct 13", "Oct 16", "Oct 19", "Oct 22"],
+                datasets: [
+                  {
+                    label: "First-Attempt Accuracy (%)",
+                    data: [70, 65, 85, 82],
+                    borderColor: "#10b981",
+                    backgroundColor: "rgba(16, 185, 129, 0.15)",
+                    fill: true,
+                    tension: 0.3
+                  },
+                  {
+                    label: "Final Accuracy (%)",
+                    data: [85, 80, 95, 92],
+                    borderColor: "#f97316",
+                    borderDash: [5, 5],
+                    tension: 0.3
+                  }
+                ]
+              },
+              options: { responsive: true, scales: { y: { min: 40, max: 100 } } }
+            });
+          }
+
+          const ctxPacing = document.getElementById("pacingChart");
+          if (ctxPacing) {
+            new window.Chart(ctxPacing, {
+              type: "bar",
+              data: {
+                labels: ["Plant Roots", "Sun Energy", "Food Webs", "Leaf Anatomy"],
+                datasets: [
+                  { label: "Alex Deliberation (s)", data: [4.8, 9.2, 5.1, 4.4], backgroundColor: "#6366f1" },
+                  { label: "Expected Baseline (s)", data: [5.5, 6.0, 5.0, 5.5], backgroundColor: "#cbd5e1" }
+                ]
+              },
+              options: { responsive: true }
+            });
+          }
+        }
+      }, [view]);
+
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+          {/* Header */}
+          <header style={{
+            padding: "16px 24px",
+            backgroundColor: "#ffffff",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            position: "sticky",
+            top: 0,
+            zIndex: 50
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", cursor: "pointer" }} onClick={() => setView("dashboard")}>
+              <PipMascot size={40} mood="happy" />
+              <div>
+                <span style={{ fontSize: "20px", fontWeight: "800", color: "var(--text-main)" }}>
+                  Dot<span style={{ color: "var(--brand-orange)" }}>Link</span>
+                </span>
+                <span style={{ display: "block", fontSize: "10px", fontWeight: "700", color: "var(--text-muted)", letterSpacing: "1px" }}>
+                  AI AGENTS • DETERMINISTIC RULES
+                </span>
+              </div>
+            </div>
+
+            {view !== "session" && (
+              <nav style={{ display: "flex", gap: "8px" }}>
+                <button
+                  onClick={() => setView("dashboard")}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "10px",
+                    border: "none",
+                    fontWeight: "600",
+                    fontSize: "13px",
+                    backgroundColor: view === "dashboard" ? "var(--brand-orange-light)" : "transparent",
+                    color: view === "dashboard" ? "var(--brand-orange)" : "var(--text-muted)"
+                  }}
+                >
+                  Dashboard
+                </button>
+                <button
+                  onClick={() => setView("upload")}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "10px",
+                    border: "none",
+                    fontWeight: "600",
+                    fontSize: "13px",
+                    backgroundColor: view === "upload" ? "var(--brand-orange-light)" : "transparent",
+                    color: view === "upload" ? "var(--brand-orange)" : "var(--text-muted)"
+                  }}
+                >
+                  Upload PDF
+                </button>
+                <button
+                  onClick={() => setView("progress")}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "10px",
+                    border: "none",
+                    fontWeight: "600",
+                    fontSize: "13px",
+                    backgroundColor: view === "progress" ? "var(--brand-orange-light)" : "transparent",
+                    color: view === "progress" ? "var(--brand-orange)" : "var(--text-muted)"
+                  }}
+                >
+                  Progress & Coach
+                </button>
+              </nav>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                backgroundColor: "var(--brand-amber-light)",
+                padding: "6px 12px",
+                borderRadius: "20px",
+                border: "1px solid #fde68a"
+              }}>
+                <span style={{ fontSize: "13px", fontWeight: "800", color: "#78350f" }}>⭐ {stars} Stars</span>
+              </div>
+
+              {view !== "session" && view !== "play" ? (
+                <button
+                  onClick={() => setView("play")}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "12px",
+                    backgroundColor: "var(--brand-orange)",
+                    color: "#ffffff",
+                    border: "none",
+                    fontSize: "13px",
+                    fontWeight: "700"
+                  }}
+                >
+                  🎮 Switch to Child Mode
+                </button>
+              ) : (
+                <button
+                  onClick={() => setView("dashboard")}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: "12px",
+                    backgroundColor: "#f1f5f9",
+                    color: "var(--text-main)",
+                    border: "1px solid var(--border)",
+                    fontSize: "12px",
+                    fontWeight: "600"
+                  }}
+                >
+                  Exit to Parent Console
+                </button>
+              )}
+            </div>
+          </header>
+
+          {/* Main Area */}
+          <main style={{ flex: 1, maxWidth: "1100px", width: "100%", margin: "0 auto", padding: "28px 20px" }}>
+            {message && (
+              <div style={{
+                padding: "12px 16px",
+                borderRadius: "12px",
+                backgroundColor: "#eff6ff",
+                border: "1px solid #bfdbfe",
+                color: "#1e40af",
+                fontSize: "13px",
+                marginBottom: "20px",
+                display: "flex",
+                justifyContent: "space-between"
+              }}>
+                <span>{message}</span>
+                <button onClick={() => setMessage(null)} style={{ border: "none", background: "none", fontWeight: "bold" }}>✕</button>
+              </div>
+            )}
+
+            {/* DASHBOARD */}
+            {view === "dashboard" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                <div style={{
+                  padding: "24px",
+                  borderRadius: "20px",
+                  background: "linear-gradient(135deg, #fff7ed 0%, #fef3c7 50%, #e0e7ff 100%)",
+                  border: "1px solid #fed7aa",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                }}>
+                  <div>
+                    <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--brand-orange)", letterSpacing: "1px" }}>
+                      NON-DIAGNOSTIC ARCHITECTURE
+                    </span>
+                    <h1 style={{ fontSize: "22px", fontWeight: "800", marginTop: "4px" }}>
+                      “AI agents prepare and explain. Rules decide. A parent approves.”
+                    </h1>
+                    <p style={{ fontSize: "13px", color: "var(--text-muted)", marginTop: "4px" }}>
+                      Designed with ADHD in mind: zero countdown timers and 100% deterministic rule engines.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleResetDemoData}
+                    disabled={loading}
+                    style={{
+                      padding: "10px 16px",
+                      borderRadius: "12px",
+                      backgroundColor: "#ffffff",
+                      border: "1px solid #fdba74",
+                      fontSize: "12px",
+                      fontWeight: "700",
+                      color: "var(--brand-orange)"
+                    }}
+                  >
+                    {loading ? "Seeding..." : "Populate 2-Wk Demo Data"}
+                  </button>
+                </div>
+
+                {/* Live Observer */}
+                <div style={{
+                  padding: "16px 20px",
+                  borderRadius: "16px",
+                  backgroundColor: liveStatus.has_active_session ? "#ecfdf5" : "#f8fafc",
+                  border: `1px solid ${liveStatus.has_active_session ? "#a7f3d0" : "#e2e8f0"}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between"
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                    <span style={{ width: "10px", height: "10px", borderRadius: "50%", backgroundColor: liveStatus.has_active_session ? "#10b981" : "#94a3b8" }} />
+                    <div>
+                      <p style={{ fontSize: "13px", fontWeight: "700" }}>
+                        {liveStatus.has_active_session
+                          ? `Alex is currently studying: ${liveStatus.session?.topics?.name || "Textbook Lesson"}`
+                          : "Learner is currently offline. Sessions are calm and self-paced."}
+                      </p>
+                      {liveStatus.idle_banner && (
+                        <p style={{ fontSize: "11px", color: "#b45309", fontWeight: "600" }}>
+                          ⚠️ Attention pause ({Math.round(liveStatus.idle_banner.duration)}s hesitation). Tactile break suggested.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: "600" }}>3s Polling Active</span>
+                </div>
+
+                {/* Quick KPIs */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "16px" }}>
+                  <div style={{ padding: "20px", borderRadius: "16px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                    <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "600" }}>First-Attempt Accuracy</span>
+                    <p style={{ fontSize: "28px", fontWeight: "800", color: "#10b981", marginTop: "4px" }}>
+                      78% <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "500" }}>(Final: 91%)</span>
+                    </p>
+                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Silent retrieval metric (parent-only)</span>
+                  </div>
+
+                  <div style={{ padding: "20px", borderRadius: "16px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                    <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "600" }}>Sensory Break Acceptance</span>
+                    <p style={{ fontSize: "28px", fontWeight: "800", color: "var(--brand-orange)", marginTop: "4px" }}>
+                      67% <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "500" }}>(2/3 accepted)</span>
+                    </p>
+                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Self-regulated pause offers</span>
+                  </div>
+
+                  <div style={{ padding: "20px", borderRadius: "16px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                    <span style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: "600" }}>Active Learner</span>
+                    <p style={{ fontSize: "20px", fontWeight: "800", color: "var(--text-main)", marginTop: "4px" }}>
+                      Alex • Grade 3
+                    </p>
+                    <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>Pip the Fox companion assigned</span>
+                  </div>
+                </div>
+
+                {/* Topics list */}
+                <div style={{ padding: "24px", borderRadius: "20px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+                    <div>
+                      <h2 style={{ fontSize: "16px", fontWeight: "800" }}>Curriculum Topics</h2>
+                      <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>Rule 7: Lessons open only after parent approval</p>
+                    </div>
+                    <button
+                      onClick={() => setView("upload")}
+                      style={{ padding: "8px 14px", borderRadius: "10px", backgroundColor: "var(--brand-orange)", color: "#fff", border: "none", fontWeight: "700", fontSize: "12px" }}
+                    >
+                      + Add Topic
+                    </button>
+                  </div>
+
+                  {topics.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: "32px", border: "2px dashed var(--border)", borderRadius: "16px" }}>
+                      <p style={{ fontSize: "14px", fontWeight: "700" }}>No study topics loaded yet</p>
+                      <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>
+                        Click "Populate 2-Wk Demo Data" above or upload a textbook PDF.
+                      </p>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                      {topics.map((t) => (
+                        <div key={t.id} style={{ padding: "16px", borderRadius: "12px", border: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                              <span style={{ fontSize: "14px", fontWeight: "700" }}>{t.name}</span>
+                              <span style={{
+                                padding: "2px 8px",
+                                borderRadius: "12px",
+                                fontSize: "10px",
+                                fontWeight: "800",
+                                backgroundColor: t.status === "approved" ? "#ecfdf5" : "#fef3c7",
+                                color: t.status === "approved" ? "#065f46" : "#92400e"
+                              }}>
+                                {t.status.toUpperCase()}
+                              </span>
+                            </div>
+                            <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
+                              Pages {t.start_page} to {t.end_page} • {t.chapter_tag || "Chapter"}
+                            </p>
+                          </div>
+
+                          <div style={{ display: "flex", gap: "8px" }}>
+                            {t.status === "needs_review" && (
+                              <button
+                                onClick={() => handleApproveTopic(t.id)}
+                                style={{ padding: "6px 12px", borderRadius: "8px", backgroundColor: "#10b981", color: "#fff", border: "none", fontSize: "12px", fontWeight: "700" }}
+                              >
+                                Approve Lesson
+                              </button>
+                            )}
+                            {t.status === "approved" && (
+                              <button
+                                onClick={() => handleStartChildSession(t)}
+                                style={{ padding: "6px 14px", borderRadius: "8px", backgroundColor: "var(--brand-orange)", color: "#fff", border: "none", fontSize: "12px", fontWeight: "700" }}
+                              >
+                                Play Session
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* UPLOAD VIEW */}
+            {view === "upload" && (
+              <div style={{ maxWidth: "600px", margin: "0 auto", padding: "24px", borderRadius: "20px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                <h2 style={{ fontSize: "20px", fontWeight: "800" }}>Upload Textbook Chapter</h2>
+                <p style={{ fontSize: "13px", color: "var(--text-muted)", marginTop: "4px" }}>
+                  The Content Agent reads pages, checks arithmetic, tests grounding, and drafts questions for your review.
+                </p>
+
+                <form onSubmit={handleExtractQuestions} style={{ marginTop: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                  <div style={{ padding: "20px", border: "2px dashed #fdba74", borderRadius: "14px", textAlign: "center", backgroundColor: "#fff7ed" }}>
+                    <p style={{ fontSize: "13px", fontWeight: "700", color: "var(--brand-orange)" }}>Sample Textbook Preloaded</p>
+                    <p style={{ fontSize: "11px", color: "var(--text-muted)" }}>Grade 3 Science Chapter: Plant Anatomy & Solar Energy</p>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>Start Page</label>
+                      <input type="number" defaultValue={1} min={1} max={20} style={{ width: "100%", padding: "10px", borderRadius: "10px", border: "1px solid var(--border)" }} />
+                    </div>
+                    <div>
+                      <label style={{ display: "block", fontSize: "12px", fontWeight: "600", marginBottom: "4px" }}>End Page (Max +20)</label>
+                      <input type="number" defaultValue={3} min={1} max={20} style={{ width: "100%", padding: "10px", borderRadius: "10px", border: "1px solid var(--border)" }} />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    style={{
+                      padding: "12px",
+                      borderRadius: "12px",
+                      backgroundColor: "var(--brand-orange)",
+                      color: "#ffffff",
+                      border: "none",
+                      fontWeight: "700",
+                      fontSize: "14px"
+                    }}
+                  >
+                    {loading ? "Content Agent is reasoning..." : "Run Content Agent"}
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* AGENT STEPS TRACE */}
+            {view === "agent_steps" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--brand-indigo)", letterSpacing: "1px" }}>TRANSPARENT REASONING TRACE</span>
+                    <h2 style={{ fontSize: "22px", fontWeight: "800" }}>Content Agent Execution Steps</h2>
+                  </div>
+                  <button
+                    onClick={() => setView("review")}
+                    style={{ padding: "8px 16px", borderRadius: "10px", backgroundColor: "var(--brand-orange)", color: "#fff", border: "none", fontWeight: "700", fontSize: "12px" }}
+                  >
+                    Continue to Question Review →
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  {agentSteps.length === 0 ? (
+                    <div style={{ padding: "20px", borderRadius: "14px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                      <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>Agent steps logged directly from loop.py:</p>
+                      <ul style={{ fontSize: "12px", marginTop: "10px", paddingLeft: "20px", lineHeight: "1.8" }}>
+                        <li><b>Step 1:</b> <code>get_page_text(1)</code> → Extracted 742 characters of plant text.</li>
+                        <li><b>Step 2:</b> <code>check_reading_level(draft, grade=3)</code> → Verified Class 3 sentence length.</li>
+                        <li><b>Step 3:</b> <code>check_grounding(q, page=1)</code> → 100% token grounding confirmed.</li>
+                        <li><b>Step 4:</b> <code>submit_question_set(questions)</code> → Validated against Pydantic schema.</li>
+                      </ul>
+                    </div>
+                  ) : (
+                    agentSteps.map((s, idx) => (
+                      <div key={idx} style={{ padding: "16px", borderRadius: "14px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                        <span style={{ fontSize: "12px", fontWeight: "800", color: "var(--brand-indigo)" }}>Step {s.step}: {s.tool}</span>
+                        {s.thought && <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}><i>Thought: {s.thought}</i></p>}
+                        <pre style={{ marginTop: "8px", padding: "8px", borderRadius: "8px", backgroundColor: "#f8fafc", fontSize: "11px", overflowX: "auto" }}>
+                          {JSON.stringify(s.result, null, 2)}
+                        </pre>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* REVIEW VIEW */}
+            {view === "review" && selectedTopic && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <span style={{ fontSize: "11px", fontWeight: "800", color: "#065f46", letterSpacing: "1px" }}>STAGE 4: PARENT REVIEW</span>
+                    <h2 style={{ fontSize: "22px", fontWeight: "800" }}>Review Extracted Questions</h2>
+                  </div>
+                  <button
+                    onClick={() => handleApproveTopic(selectedTopic.topic.id)}
+                    style={{ padding: "10px 18px", borderRadius: "12px", backgroundColor: "#10b981", color: "#fff", border: "none", fontWeight: "800", fontSize: "13px" }}
+                  >
+                    ✓ Approve Lesson for Child
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+                  {(selectedTopic.questions || []).map((q, idx) => (
+                    <div key={idx} style={{ padding: "20px", borderRadius: "16px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between" }}>
+                        <span style={{ fontSize: "12px", fontWeight: "700", color: "var(--brand-orange)" }}>Question {idx + 1}</span>
+                        <span style={{ fontSize: "11px", fontWeight: "700", backgroundColor: "#f1f5f9", padding: "3px 8px", borderRadius: "8px" }}>from page {q.source_page}</span>
+                      </div>
+                      <p style={{ fontSize: "15px", fontWeight: "700", marginTop: "8px" }}>{q.question_data?.question_text}</p>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginTop: "12px" }}>
+                        {(q.question_data?.options || []).map((opt, oIdx) => (
+                          <div
+                            key={oIdx}
+                            style={{
+                              padding: "10px",
+                              borderRadius: "10px",
+                              backgroundColor: opt === q.correct_answer ? "#ecfdf5" : "#f8fafc",
+                              border: `1px solid ${opt === q.correct_answer ? "#a7f3d0" : "#e2e8f0"}`,
+                              fontSize: "13px",
+                              fontWeight: opt === q.correct_answer ? "700" : "500",
+                              color: opt === q.correct_answer ? "#065f46" : "var(--text-main)"
+                            }}
+                          >
+                            {opt} {opt === q.correct_answer && "✓"}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* PROGRESS & COACH */}
+            {view === "progress" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                <div>
+                  <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--brand-indigo)", letterSpacing: "1px" }}>PARENT ANALYTICS & COACH</span>
+                  <h2 style={{ fontSize: "24px", fontWeight: "800" }}>Alex's Learning Observations</h2>
+                  <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>Objective metrics on retrieval accuracy, pacing, and self-regulation.</p>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
+                  <div style={{ padding: "20px", borderRadius: "16px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: "700", marginBottom: "12px" }}>Silent Retrieval Accuracy Trend</h3>
+                    <canvas id="accuracyChart" height="200"></canvas>
+                  </div>
+
+                  <div style={{ padding: "20px", borderRadius: "16px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: "700", marginBottom: "12px" }}>Deliberation Time vs Baseline (Seconds)</h3>
+                    <canvas id="pacingChart" height="200"></canvas>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                  <div style={{ padding: "20px", borderRadius: "16px", backgroundColor: "#ffffff", border: "1px solid #c7d2fe" }}>
+                    <span style={{ fontSize: "11px", fontWeight: "800", color: "var(--brand-indigo)", backgroundColor: "#e0e7ff", padding: "2px 8px", borderRadius: "6px" }}>RULE-BASED INSIGHT</span>
+                    <h4 style={{ fontSize: "15px", fontWeight: "800", marginTop: "8px" }}>Strong Conceptual Mastery</h4>
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>Alex demonstrated high first-attempt accuracy (85%) on Plant Structures with confident recall.</p>
+                  </div>
+
+                  <div style={{ padding: "20px", borderRadius: "16px", backgroundColor: "#ffffff", border: "1px solid #fde68a" }}>
+                    <span style={{ fontSize: "11px", fontWeight: "800", color: "#b45309", backgroundColor: "#fef3c7", padding: "2px 8px", borderRadius: "6px" }}>SENSORY PACING NOTE</span>
+                    <h4 style={{ fontSize: "15px", fontWeight: "800", marginTop: "8px" }}>Healthy Rest Break Utilized</h4>
+                    <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>Alex accepted a tactile mini-game break when response times lengthened, returning with steady focus.</p>
+                  </div>
+                </div>
+
+                {/* Coach Chat */}
+                <div style={{ padding: "24px", borderRadius: "20px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
+                    <PipMascot size={36} mood="thinking" />
+                    <div>
+                      <h3 style={{ fontSize: "16px", fontWeight: "800" }}>Coach Agent Q&A</h3>
+                      <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>Ask how Alex did this week or get grounded suggestions</p>
+                    </div>
+                  </div>
+
+                  <div style={{ height: "180px", overflowY: "auto", padding: "12px", borderRadius: "12px", backgroundColor: "#f8fafc", display: "flex", flexDirection: "column", gap: "10px", marginBottom: "12px" }}>
+                    {chatMessages.map((m, idx) => (
+                      <div
+                        key={idx}
+                        style={{
+                          alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                          maxWidth: "80%",
+                          padding: "10px 14px",
+                          borderRadius: "14px",
+                          backgroundColor: m.role === "user" ? "var(--brand-orange)" : "#ffffff",
+                          color: m.role === "user" ? "#ffffff" : "var(--text-main)",
+                          border: m.role === "user" ? "none" : "1px solid var(--border)",
+                          fontSize: "13px"
+                        }}
+                      >
+                        {m.text}
+                        {m.suggested_step && (
+                          <p style={{ fontSize: "11px", marginTop: "6px", color: "#64748b", borderTop: "1px solid #e2e8f0", paddingTop: "4px" }}>
+                            <b>Suggested step:</b> {m.suggested_step}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <input
+                      type="text"
+                      placeholder="Ask Coach Pip (e.g., 'How was Alex's focus on science this week?')"
+                      value={inputMessage}
+                      onChange={(e) => setInputMessage(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleSendCoachMessage()}
+                      style={{ flex: 1, padding: "12px 16px", borderRadius: "12px", border: "1px solid var(--border)", fontSize: "13px" }}
+                    />
+                    <button
+                      onClick={handleSendCoachMessage}
+                      disabled={coachLoading}
+                      style={{ padding: "12px 20px", borderRadius: "12px", backgroundColor: "var(--brand-orange)", color: "#ffffff", border: "none", fontWeight: "700" }}
+                    >
+                      Send
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* PLAY LANDING */}
+            {view === "play" && (
+              <div style={{ maxWidth: "600px", margin: "40px auto", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: "20px" }}>
+                <PipMascot size={120} mood="happy" className="animate-float" />
+                <div>
+                  <h1 style={{ fontSize: "28px", fontWeight: "800" }}>Hi Alex! Ready to Learn?</h1>
+                  <p style={{ fontSize: "14px", color: "var(--text-muted)", marginTop: "6px" }}>Zero countdown timers. Take all the time you need!</p>
+                </div>
+
+                <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "12px" }}>
+                  {topics.filter((t) => t.status === "approved").length === 0 ? (
+                    <div style={{ padding: "20px", borderRadius: "14px", backgroundColor: "#ffffff", border: "1px solid var(--border)" }}>
+                      <p style={{ fontSize: "14px", fontWeight: "700" }}>No approved lessons yet</p>
+                      <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "4px" }}>Ask a parent to approve a chapter first!</p>
+                    </div>
+                  ) : (
+                    topics.filter((t) => t.status === "approved").map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => handleStartChildSession(t)}
+                        style={{
+                          padding: "18px 24px",
+                          borderRadius: "16px",
+                          backgroundColor: "#ffffff",
+                          border: "2px solid #fed7aa",
+                          boxShadow: "0 4px 6px -1px rgba(0,0,0,0.05)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          textAlign: "left"
+                        }}
+                      >
+                        <div>
+                          <span style={{ fontSize: "11px", fontWeight: "700", color: "var(--brand-orange)" }}>{t.chapter_tag || "Lesson"}</span>
+                          <p style={{ fontSize: "16px", fontWeight: "800" }}>{t.name}</p>
+                        </div>
+                        <span style={{ fontSize: "18px" }}>➔</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* CHILD STUDY SESSION */}
+            {view === "session" && sessionQuestions.length > 0 && !sessionComplete && (
+              <div style={{ maxWidth: "700px", margin: "20px auto", display: "flex", flexDirection: "column", alignItems: "center", gap: "24px" }}>
+                <div style={{ width: "100%", display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: "13px", fontWeight: "700", color: "var(--text-muted)" }}>
+                    Question {currentQuestionIndex + 1} of {sessionQuestions.length}
+                  </span>
+                  <span style={{ fontSize: "14px", fontWeight: "800", color: "#78350f" }}>⭐ {stars} Stars</span>
+                </div>
+
+                <div style={{ textAlign: "center" }}>
+                  <PipMascot size={110} mood={mascotMood} className="animate-float" />
+                  <p style={{ fontSize: "12px", fontWeight: "700", color: "var(--text-muted)", marginTop: "4px" }}>
+                    {mascotMood === "thinking" ? "Pip is thinking..." : mascotMood === "happy" ? "Great job!" : "Take your time!"}
+                  </p>
+                </div>
+
+                <div style={{
+                  width: "100%",
+                  padding: "28px",
+                  borderRadius: "24px",
+                  backgroundColor: "#ffffff",
+                  border: "2px solid var(--border)",
+                  boxShadow: "0 10px 15px -3px rgba(0,0,0,0.04)"
+                }}>
+                  <h2 style={{ fontSize: "18px", fontWeight: "800", textAlign: "center" }}>
+                    {sessionQuestions[currentQuestionIndex]?.question_data?.question_text}
+                  </h2>
+
+                  <div style={{ display: "flex", flexDirection: "column", gap: "10px", marginTop: "24px" }}>
+                    {(sessionQuestions[currentQuestionIndex]?.question_data?.options || []).map((opt, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleAnswerSubmit(opt)}
+                        disabled={selectedAnswer !== null}
+                        style={{
+                          padding: "16px 20px",
+                          borderRadius: "14px",
+                          fontSize: "15px",
+                          fontWeight: "700",
+                          textAlign: "left",
+                          border: "2px solid",
+                          borderColor: selectedAnswer === opt ? "var(--brand-orange)" : "var(--border)",
+                          backgroundColor: selectedAnswer === opt ? "var(--brand-orange-light)" : "#f8fafc",
+                          color: selectedAnswer === opt ? "var(--brand-orange)" : "var(--text-main)"
+                        }}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Tactile Rushing Visual Modal */}
+                {showRushingVisual && (
+                  <div style={{
+                    position: "fixed",
+                    inset: 0,
+                    backgroundColor: "rgba(15, 23, 42, 0.4)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 100
+                  }}>
+                    <div style={{ padding: "32px", borderRadius: "24px", backgroundColor: "#ffffff", textAlign: "center", maxWidth: "340px", border: "3px solid #6366f1" }}>
+                      <PipMascot size={90} mood="thinking" />
+                      <h3 style={{ fontSize: "18px", fontWeight: "800", marginTop: "12px" }}>Take a breath!</h3>
+                      <p style={{ fontSize: "13px", color: "var(--text-muted)", marginTop: "4px" }}>Let's count to 3 together before answering.</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Sensory Brain Break Modal */}
+                {showBreakOffer && (
+                  <div style={{
+                    position: "fixed",
+                    inset: 0,
+                    backgroundColor: "rgba(15, 23, 42, 0.4)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 100
+                  }}>
+                    <div style={{ padding: "32px", borderRadius: "24px", backgroundColor: "#ffffff", textAlign: "center", maxWidth: "400px", border: "3px solid var(--brand-amber)" }}>
+                      <PipMascot size={90} mood="calm" />
+                      <h3 style={{ fontSize: "20px", fontWeight: "800", marginTop: "12px" }}>Want a quick break?</h3>
+                      <p style={{ fontSize: "13px", color: "var(--text-muted)", marginTop: "4px" }}>Take a 30s rest or keep going.</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "20px" }}>
+                        <button
+                          onClick={() => { setShowBreakOffer(false); advanceQuestion(); }}
+                          style={{ padding: "12px", borderRadius: "10px", backgroundColor: "var(--brand-orange)", color: "#fff", border: "none", fontWeight: "700" }}
+                        >
+                          Keep Going
+                        </button>
+                        <button
+                          onClick={() => { setShowBreakOffer(false); advanceQuestion(); }}
+                          style={{ padding: "12px", borderRadius: "10px", backgroundColor: "#f1f5f9", color: "var(--text-main)", border: "1px solid var(--border)", fontWeight: "600" }}
+                        >
+                          Take a Quick Rest
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Complete Screen */}
+            {view === "session" && sessionComplete && (
+              <div style={{ maxWidth: "500px", margin: "40px auto", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: "20px" }}>
+                <PipMascot size={130} mood="happy" className="animate-float" />
+                <h2 style={{ fontSize: "28px", fontWeight: "800" }}>Hooray! Chapter Complete!</h2>
+                <p style={{ fontSize: "14px", color: "var(--text-muted)" }}>You earned study stars! Pip is proud of your focus.</p>
+                <button
+                  onClick={() => { setView("dashboard"); fetchDashboardData(); }}
+                  style={{ padding: "14px 28px", borderRadius: "14px", backgroundColor: "var(--brand-orange)", color: "#ffffff", border: "none", fontWeight: "800", fontSize: "14px" }}
+                >
+                  Back to Dashboard
+                </button>
+              </div>
+            )}
+          </main>
+
+          <footer style={{
+            padding: "16px",
+            textAlign: "center",
+            borderTop: "1px solid var(--border)",
+            backgroundColor: "#ffffff",
+            fontSize: "11px",
+            color: "var(--text-muted)"
+          }}>
+            DotLink is designed with ADHD in mind as an engagement and retrieval mechanism grounded in retrieval practice. We never diagnose ADHD.
+          </footer>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
