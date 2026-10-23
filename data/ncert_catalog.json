@@ -1,0 +1,52 @@
+{
+  "catalog": [
+    {
+      "grade": 4,
+      "subject": "Maths",
+      "chapter_num": 1,
+      "title": "Building with Bricks",
+      "ncert_code": "demh101",
+      "url": "TODO_NCERT_URL_GRADE_4_MATHS_CH1"
+    },
+    {
+      "grade": 4,
+      "subject": "Science",
+      "chapter_num": 1,
+      "title": "Going to School",
+      "ncert_code": "deev101",
+      "url": "TODO_NCERT_URL_GRADE_4_SCIENCE_CH1"
+    },
+    {
+      "grade": 4,
+      "subject": "English",
+      "chapter_num": 1,
+      "title": "Wake Up! and Neha's Alarm Clock",
+      "ncert_code": "deen101",
+      "url": "TODO_NCERT_URL_GRADE_4_ENGLISH_CH1"
+    },
+    {
+      "grade": 5,
+      "subject": "Maths",
+      "chapter_num": 1,
+      "title": "The Fish Tale",
+      "ncert_code": "eemh101",
+      "url": "TODO_NCERT_URL_GRADE_5_MATHS_CH1"
+    },
+    {
+      "grade": 5,
+      "subject": "Science",
+      "chapter_num": 1,
+      "title": "Super Senses",
+      "ncert_code": "eeev101",
+      "url": "TODO_NCERT_URL_GRADE_5_SCIENCE_CH1"
+    },
+    {
+      "grade": 5,
+      "subject": "English",
+      "chapter_num": 1,
+      "title": "Ice-Cream Man",
+      "ncert_code": "eeen101",
+      "url": "TODO_NCERT_URL_GRADE_5_ENGLISH_CH1"
+    }
+  ]
+}
