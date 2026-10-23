@@ -61,8 +61,12 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS topics (
             id TEXT PRIMARY KEY,
             textbook_id TEXT NOT NULL REFERENCES textbooks(id) ON DELETE CASCADE,
+            chapter_number INTEGER NOT NULL DEFAULT 1,
+            chapter_title TEXT,
             chapter_name TEXT NOT NULL,
+            topic_number INTEGER NOT NULL DEFAULT 1,
             name TEXT NOT NULL,
+            description TEXT,
             subject_tag TEXT NOT NULL,
             start_page INTEGER NOT NULL,
             end_page INTEGER NOT NULL,
@@ -177,6 +181,19 @@ async def init_db():
             auto_paused_at TEXT
         );
         """)
+
+        # Ensure hierarchical columns exist on topics table for existing databases
+        cursor = await db.execute("PRAGMA table_info(topics);")
+        topic_cols = [r["name"] for r in await cursor.fetchall()]
+        if "chapter_number" not in topic_cols:
+            await db.execute("ALTER TABLE topics ADD COLUMN chapter_number INTEGER NOT NULL DEFAULT 1;")
+        if "chapter_title" not in topic_cols:
+            await db.execute("ALTER TABLE topics ADD COLUMN chapter_title TEXT;")
+        if "topic_number" not in topic_cols:
+            await db.execute("ALTER TABLE topics ADD COLUMN topic_number INTEGER NOT NULL DEFAULT 1;")
+        if "description" not in topic_cols:
+            await db.execute("ALTER TABLE topics ADD COLUMN description TEXT;")
+
         await db.commit()
     finally:
         await db.close()

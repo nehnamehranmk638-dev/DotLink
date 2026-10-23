@@ -149,103 +149,12 @@ async def run_ncert_fetch_and_chunk(
         textbook_id, page_count, extracted_pages = await ensure_textbook_ingested(
             parent_id, grade, subject, chapter_num, uploaded_pdf_bytes, chapter_title_override, db
         )
-
-        async def tool_executor(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-            if name == "fetch_ncert_pdf":
-                return {"success": True, "textbook_id": textbook_id, "page_count": page_count}
-            elif name == "scan_headings":
-                sp = args.get("start_page", 1)
-                ep = args.get("end_page", 10)
-                cursor = await db.execute("""
-                    SELECT page_number, text FROM source_pages
-                    WHERE textbook_id = ? AND page_number BETWEEN ? AND ?
-                    ORDER BY page_number ASC
-                """, (textbook_id, sp, ep))
-                rows = await cursor.fetchall()
-                headings = []
-                for r in rows:
-                    lines = [line.strip() for line in r["text"].splitlines() if line.strip()]
-                    first_lines = lines[:4] if lines else []
-                    headings.append({"page": r["page_number"], "leading_lines": first_lines})
-                return {"pages": headings}
-            return {"error": f"Unknown tool {name}"}
-
-        system_prompt = (
-            f"You are Agent 1 (NCERT Fetch & Chunk). Your task is to analyze the chapter text for "
-            f"Grade {grade} {subject} (Chapter {chapter_num}) with textbook ID '{textbook_id}' ({page_count} pages), "
-            f"and chunk the chapter into 2 to 4 bite-sized, logical learning topics with start_page and end_page.\n"
-            f"Always call submit_topic_chunks at the end with the topics list."
-        )
-
-        initial_user_msg = f"Please process Grade {grade} {subject} Chapter {chapter_num}. Textbook ID is {textbook_id}."
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": initial_user_msg}
-        ]
-
-        if not settings.GROQ_API_KEY and not settings.GEMINI_API_KEY:
-            mid = max(1, page_count // 2)
-            topics_result = SubmitTopicChunksPayload(
-                subject_tag=subject,
-                chapter_title=chapter_title_override or f"{subject} Chapter {chapter_num}",
-                topics_list=[
-                    {"name": f"Part 1: Introduction to {subject}", "start_page": 1, "end_page": mid},
-                    {"name": f"Part 2: Concepts and Practice", "start_page": mid + 1 if page_count > 1 else 1, "end_page": page_count}
-                ]
-            )
-        else:
-            topics_result = await run_agent_loop(
-                agent_name="ncert_agent",
-                run_id=run_id,
-                topic_id=temp_topic_id,
-                task_weight="light",
-                messages=messages,
-                tool_definitions=AGENT_1_TOOLS,
-                tool_executor=tool_executor,
-                submit_tool_name="submit_topic_chunks",
-                submit_validator=SubmitTopicChunksPayload,
-                db=db
-            )
-
-        # Save topics to DB with status 'chunked'
-        created_topics = []
-        for t_item in topics_result.topics_list:
-            top_id = str(uuid.uuid4())
-            await db.execute("""
-                INSERT INTO topics (id, textbook_id, chapter_name, name, subject_tag, start_page, end_page, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'chunked')
-            """, (top_id, textbook_id, topics_result.chapter_title, t_item.name, topics_result.subject_tag, t_item.start_page, t_item.end_page))
-
-            # Associate source pages in this range with the topic
-            await db.execute("""
-                UPDATE source_pages SET topic_id = ?
-                WHERE textbook_id = ? AND page_number BETWEEN ? AND ?
-            """, (top_id, textbook_id, t_item.start_page, t_item.end_page))
-
-            created_topics.append({
-                "id": top_id,
-                "textbook_id": textbook_id,
-                "chapter_name": topics_result.chapter_title,
-                "name": t_item.name,
-                "subject_tag": topics_result.subject_tag,
-                "start_page": t_item.start_page,
-                "end_page": t_item.end_page,
-                "status": "chunked"
-            })
-        await db.commit()
-
-        if created_topics:
-            first_topic_id = created_topics[0]["id"]
-            await db.execute("""
-                UPDATE agent_steps SET topic_id = ?
-                WHERE run_id = ? AND topic_id IS NULL
-            """, (first_topic_id, run_id))
-            await db.commit()
-
+        from app.agents.chunking_agent import run_textbook_chunking_agent
+        chunk_res = await run_textbook_chunking_agent(textbook_id, grade, subject, db)
         return {
             "textbook_id": textbook_id,
-            "chapter_title": topics_result.chapter_title,
-            "topics": created_topics
+            "chapter_title": chunk_res.get("title", chapter_title_override or f"{subject} Chapter {chapter_num}"),
+            "topics": chunk_res.get("topics", [])
         }
     finally:
         await db.close()

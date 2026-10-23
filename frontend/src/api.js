@@ -105,6 +105,19 @@ export const api = {
   },
 
   // Curriculum & Textbooks
+  async uploadAndChunkTextbook(formData) {
+    const res = await fetch(`${API_BASE}/curriculum/upload-textbook`, {
+      method: 'POST',
+      headers: { ...getAuthHeader() },
+      body: formData
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to upload and chunk textbook'));
+    }
+    return res.json();
+  },
+
   async fetchAndChunk(formData) {
     const res = await fetch(`${API_BASE}/ncert/fetch-and-chunk`, {
       method: 'POST',

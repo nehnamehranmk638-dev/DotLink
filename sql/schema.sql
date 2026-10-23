@@ -40,13 +40,17 @@ CREATE TABLE IF NOT EXISTS textbooks (
 );
 CREATE INDEX IF NOT EXISTS idx_textbooks_parent ON textbooks(parent_id);
 
--- 4. topics: id, textbook_id, chapter_name, name, subject_tag, start_page, end_page, status
+-- 4. topics: id, textbook_id, chapter_number, chapter_title, chapter_name, topic_number, name, description, subject_tag, start_page, end_page, status
 -- status: 'chunked' -> 'generating' -> 'needs_review' -> 'approved'
 CREATE TABLE IF NOT EXISTS topics (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     textbook_id UUID NOT NULL REFERENCES textbooks(id) ON DELETE CASCADE,
+    chapter_number INTEGER NOT NULL DEFAULT 1,
+    chapter_title TEXT,
     chapter_name TEXT NOT NULL,
+    topic_number INTEGER NOT NULL DEFAULT 1,
     name TEXT NOT NULL,
+    description TEXT,
     subject_tag TEXT NOT NULL,
     start_page INTEGER NOT NULL,
     end_page INTEGER NOT NULL,

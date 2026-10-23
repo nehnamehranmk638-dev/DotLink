@@ -3,6 +3,9 @@ from pydantic import ValidationError
 from app.models.schemas import (
     SubmitTopicChunksPayload,
     TopicChunkItem,
+    SubTopicChunk,
+    ChapterChunk,
+    CurriculumHierarchySubmission,
     SubmitLessonAndRevisionPayload,
     AnimatedScene,
     HighlightedWord,
@@ -15,10 +18,82 @@ from app.models.schemas import (
 )
 from app.agents.tools import check_reading_level, calculator, check_grounding
 from app.agents.quiz_agent import run_code_backstop
+from app.services.pdf_ncert import validate_selectable_text
 
 # -------------------------------------------------------------------
-# Agent 1 Validator Tests
+# Agent 1 Hierarchical Validator Tests
 # -------------------------------------------------------------------
+def test_curriculum_hierarchy_submission_valid():
+    submission = CurriculumHierarchySubmission(
+        subject_tag="Science",
+        chapters=[
+            ChapterChunk(
+                chapter_number=1,
+                chapter_title="Living and Non-Living Things",
+                start_page=1,
+                end_page=12,
+                topics=[
+                    SubTopicChunk(
+                        topic_number=1,
+                        name="Characteristics of Living Things",
+                        summary="Overview of growth, breathing, and movement.",
+                        start_page=1,
+                        end_page=6
+                    ),
+                    SubTopicChunk(
+                        topic_number=2,
+                        name="Habitats & Surroundings",
+                        summary="How living things interact with their environment.",
+                        start_page=7,
+                        end_page=12
+                    )
+                ]
+            )
+        ]
+    )
+    assert len(submission.chapters) == 1
+    assert submission.chapters[0].chapter_number == 1
+    assert len(submission.chapters[0].topics) == 2
+    assert submission.chapters[0].topics[0].start_page == 1
+
+def test_chapter_chunk_invalid_page_order():
+    with pytest.raises(ValidationError) as exc:
+        ChapterChunk(
+            chapter_number=1,
+            chapter_title="Invalid Chapter",
+            start_page=15,
+            end_page=5,
+            topics=[
+                SubTopicChunk(
+                    topic_number=1,
+                    name="SubTopic 1",
+                    summary="Summary 1",
+                    start_page=15,
+                    end_page=15
+                )
+            ]
+        )
+    assert "start_page (15) cannot be greater than end_page (5)" in str(exc.value)
+
+def test_sub_topic_chunk_invalid_page_order():
+    with pytest.raises(ValidationError) as exc:
+        SubTopicChunk(
+            topic_number=1,
+            name="Invalid SubTopic",
+            summary="Summary",
+            start_page=10,
+            end_page=4
+        )
+    assert "start_page (10) cannot be greater than end_page (4)" in str(exc.value)
+
+def test_selectable_text_validator():
+    # Blank / image-only pages without text should raise error
+    with pytest.raises(ValueError) as exc:
+        validate_selectable_text([{"page_number": 1, "text": ""}, {"page_number": 2, "text": "   "}])
+    assert "no_selectable_text" in str(exc.value)
+
+    # Pages with sufficient selectable text should pass
+    validate_selectable_text([{"page_number": 1, "text": "This is a full paragraph of selectable digital textbook text containing plenty of characters for validation."}])
 def test_topic_chunks_valid():
     payload = SubmitTopicChunksPayload(
         subject_tag="Maths",

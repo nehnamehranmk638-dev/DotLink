@@ -69,8 +69,12 @@ class TextbookOut(BaseModel):
 class TopicOut(BaseModel):
     id: str
     textbook_id: str
+    chapter_number: Optional[int] = 1
+    chapter_title: Optional[str] = None
     chapter_name: str
+    topic_number: Optional[int] = 1
     name: str
+    description: Optional[str] = None
     subject_tag: str
     start_page: int
     end_page: int
@@ -87,7 +91,38 @@ class SourcePageOut(BaseModel):
 # -------------------------------------------------------------
 # 4. Agent Tool Payloads (Strict Validation)
 # -------------------------------------------------------------
-# Agent 1 Payloads
+# Agent 1 Hierarchical Payloads
+class SubTopicChunk(BaseModel):
+    topic_number: int = Field(..., ge=1)
+    name: str = Field(..., min_length=2, description="Clear, child-friendly sub-topic title")
+    summary: str = Field(..., description="1-sentence overview of what this sub-topic covers")
+    start_page: int = Field(..., ge=1)
+    end_page: int = Field(..., ge=1)
+
+    @model_validator(mode="after")
+    def validate_page_order(self):
+        if self.start_page > self.end_page:
+            raise ValueError(f"start_page ({self.start_page}) cannot be greater than end_page ({self.end_page})")
+        return self
+
+class ChapterChunk(BaseModel):
+    chapter_number: int = Field(..., ge=1)
+    chapter_title: str = Field(..., min_length=2)
+    start_page: int = Field(..., ge=1)
+    end_page: int = Field(..., ge=1)
+    topics: List[SubTopicChunk] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def validate_page_order(self):
+        if self.start_page > self.end_page:
+            raise ValueError(f"Chapter start_page ({self.start_page}) cannot be greater than end_page ({self.end_page})")
+        return self
+
+class CurriculumHierarchySubmission(BaseModel):
+    subject_tag: str = Field(..., min_length=2)
+    chapters: List[ChapterChunk] = Field(..., min_length=1)
+
+# Backward-compatibility Agent 1 flat payload
 class TopicChunkItem(BaseModel):
     name: str = Field(..., min_length=2)
     start_page: int = Field(..., ge=1)

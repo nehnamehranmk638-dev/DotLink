@@ -16,6 +16,8 @@ from app.models.schemas import (
     SourcePageOut
 )
 from app.agents.ncert_agent import run_ncert_fetch_and_chunk
+from app.agents.chunking_agent import run_textbook_chunking_agent
+from app.services.pdf_ncert import ingest_uploaded_textbook
 from app.agents.lesson_revision_agent import run_lesson_and_revision_agent
 from app.agents.quiz_agent import run_quiz_agent
 from app.agents.loop import log_agent_step
@@ -45,11 +47,79 @@ async def background_generate_lesson_and_quizzes(topic_id: str, previous_status:
     finally:
         await db.close()
 
+@router.post("/curriculum/upload-textbook")
+async def upload_and_chunk_textbook(
+    file: UploadFile = File(...),
+    grade: int = Form(...),
+    subject_tag: str = Form(...),
+    title: Optional[str] = Form(None),
+    parent: dict = Depends(get_current_parent)
+):
+    """
+    Parent directly uploads a digital textbook PDF.
+    Extracts text per-page, validates selectable text, stores PDF,
+    and invokes Agent 1 for intelligent hierarchical chunking (Chapters -> Sub-Topics).
+    """
+    if not file or not file.filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A digital textbook PDF file is required."
+        )
+
+    clean_title = (title or "").strip()
+    if not clean_title:
+        base_name = file.filename.rsplit(".", 1)[0]
+        clean_title = base_name.replace("_", " ").replace("-", " ").title()
+        if not clean_title:
+            clean_title = f"{subject_tag} Grade {grade}"
+
+    pdf_bytes = await file.read()
+    if len(pdf_bytes) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The uploaded PDF file is empty."
+        )
+
+    db = await get_db()
+    try:
+        textbook_id, page_count, pages = await ingest_uploaded_textbook(
+            parent_id=parent["id"],
+            grade=grade,
+            subject_tag=subject_tag,
+            title=clean_title,
+            filename=file.filename,
+            pdf_bytes=pdf_bytes,
+            db=db
+        )
+
+        result = await run_textbook_chunking_agent(
+            textbook_id=textbook_id,
+            grade=grade,
+            subject_tag=subject_tag,
+            db=db
+        )
+        return result
+    except ValueError as ve:
+        err_str = str(ve)
+        if "no_selectable_text" in err_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="no_selectable_text: The uploaded PDF does not contain selectable text (may be scanned images). Please upload a digital textbook PDF with selectable text."
+            )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err_str)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Upload & Chunking error: {str(e)}"
+        )
+    finally:
+        await db.close()
+
 @router.post("/ncert/fetch-and-chunk")
 async def fetch_and_chunk_ncert(
     grade: int = Form(...),
     subject: str = Form(...),
-    chapter_num: int = Form(...),
+    chapter_num: int = Form(1),
     file: Optional[UploadFile] = File(None),
     parent: dict = Depends(get_current_parent)
 ):
@@ -103,15 +173,21 @@ async def list_topics_for_textbook(id: str, parent: dict = Depends(get_current_p
     try:
         await verify_textbook_ownership(id, parent["id"], db)
         cursor = await db.execute("""
-            SELECT * FROM topics WHERE textbook_id = ? ORDER BY start_page ASC
+            SELECT * FROM topics
+            WHERE textbook_id = ?
+            ORDER BY chapter_number ASC, topic_number ASC, start_page ASC
         """, (id,))
         rows = await cursor.fetchall()
         return [
             TopicOut(
                 id=r["id"],
                 textbook_id=r["textbook_id"],
+                chapter_number=r["chapter_number"] if "chapter_number" in r.keys() else 1,
+                chapter_title=r["chapter_title"] if "chapter_title" in r.keys() and r["chapter_title"] else r["chapter_name"],
                 chapter_name=r["chapter_name"],
+                topic_number=r["topic_number"] if "topic_number" in r.keys() else 1,
                 name=r["name"],
+                description=r["description"] if "description" in r.keys() else None,
                 subject_tag=r["subject_tag"],
                 start_page=r["start_page"],
                 end_page=r["end_page"],
@@ -131,8 +207,12 @@ async def get_topic(id: str, parent: dict = Depends(get_current_parent)):
         return TopicOut(
             id=topic["id"],
             textbook_id=topic["textbook_id"],
+            chapter_number=topic["chapter_number"] if "chapter_number" in topic.keys() else 1,
+            chapter_title=topic["chapter_title"] if "chapter_title" in topic.keys() and topic["chapter_title"] else topic["chapter_name"],
             chapter_name=topic["chapter_name"],
+            topic_number=topic["topic_number"] if "topic_number" in topic.keys() else 1,
             name=topic["name"],
+            description=topic["description"] if "description" in topic.keys() else None,
             subject_tag=topic["subject_tag"],
             start_page=topic["start_page"],
             end_page=topic["end_page"],

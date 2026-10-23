@@ -162,10 +162,46 @@ a {
 .badge-maths { background: #3b82f6; color: white; }
 .badge-science { background: #10b981; color: white; }
 .badge-english { background: #ec4899; color: white; }
+.badge-evs { background: #14b8a6; color: white; }
+.badge-hindi { background: #f97316; color: white; }
+.badge-social-studies, .badge-social_studies { background: #8b5cf6; color: white; }
+.badge-default { background: #64748b; color: white; }
 .badge-status-approved { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
-.badge-status-review { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+.badge-status-review, .badge-status-needs_review { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
 .badge-status-chunked { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.3); }
 .badge-status-generating { background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.3); }
+
+/* Chapter Accordion Styles */
+.chapter-accordion {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  margin-bottom: 16px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.chapter-accordion-header {
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  background: rgba(30, 41, 59, 0.4);
+  user-select: none;
+}
+
+.chapter-accordion-header:hover {
+  background: rgba(51, 65, 85, 0.5);
+}
+
+.chapter-accordion-body {
+  padding: 20px;
+  border-top: 1px solid var(--border-subtle);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
 
 /* Navigation & Header */
 .app-header {
