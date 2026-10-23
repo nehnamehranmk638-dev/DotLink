@@ -11,6 +11,7 @@ from app.routers.children import router as children_router
 from app.routers.curriculum import router as curriculum_router
 from app.routers.play import router as play_router
 from app.routers.adaptive import router as adaptive_router
+from app.routers.dashboard import router as dashboard_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -21,7 +22,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="DotLink API",
     description="Agentic NCERT Learning Platform for Parents and Children",
-    version="0.2.0",
+    version="0.5.0",
     lifespan=lifespan
 )
 
@@ -46,12 +47,13 @@ app.include_router(children_router)
 app.include_router(curriculum_router)
 app.include_router(play_router)
 app.include_router(adaptive_router)
+app.include_router(dashboard_router)
 
 @app.get("/health", tags=["system"])
 async def health_check():
     return {
         "status": "healthy",
         "service": "DotLink API",
-        "version": "0.2.0",
+        "version": "0.5.0",
         "environment": settings.ENVIRONMENT
     }
