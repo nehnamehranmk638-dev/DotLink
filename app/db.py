@@ -115,7 +115,7 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS agent_steps (
             id TEXT PRIMARY KEY,
             run_id TEXT NOT NULL,
-            topic_id TEXT NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+            topic_id TEXT REFERENCES topics(id) ON DELETE CASCADE,
             agent_name TEXT NOT NULL,
             step_num INTEGER NOT NULL,
             tool_name TEXT NOT NULL,

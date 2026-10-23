@@ -143,7 +143,7 @@ async def run_ncert_fetch_and_chunk(
     """
     db = await get_db()
     run_id = str(uuid.uuid4())
-    temp_topic_id = str(uuid.uuid4())
+    temp_topic_id = None
 
     try:
         textbook_id, page_count, extracted_pages = await ensure_textbook_ingested(
@@ -233,6 +233,14 @@ async def run_ncert_fetch_and_chunk(
                 "status": "chunked"
             })
         await db.commit()
+
+        if created_topics:
+            first_topic_id = created_topics[0]["id"]
+            await db.execute("""
+                UPDATE agent_steps SET topic_id = ?
+                WHERE run_id = ? AND topic_id IS NULL
+            """, (first_topic_id, run_id))
+            await db.commit()
 
         return {
             "textbook_id": textbook_id,

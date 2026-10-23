@@ -9,7 +9,8 @@ from app.config import settings
 class LLMService:
     def __init__(self):
         self.groq_api_key = settings.GROQ_API_KEY
-        self.gemini_api_key = settings.GEMINI_API_KEY
+        # Only enable Gemini fallback if key is a valid Google AI Studio key format
+        self.gemini_api_key = settings.GEMINI_API_KEY if settings.GEMINI_API_KEY.startswith("AIzaSy") else ""
 
     async def call_groq(
         self,
@@ -33,14 +34,19 @@ class LLMService:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
 
-        # Exponential backoff for rate limits
-        delays = [1, 2, 4]
-        for delay in delays:
+        # Exponential backoff respecting retry-after headers
+        delays = [2, 5, 8, 12, 16]
+        for idx, delay in enumerate(delays):
             try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
+                async with httpx.AsyncClient(timeout=90.0) as client:
                     resp = await client.post(url, headers=headers, json=payload)
                     if resp.status_code == 429:
-                        await asyncio.sleep(delay)
+                        retry_after_hdr = resp.headers.get("retry-after")
+                        try:
+                            wait_time = float(retry_after_hdr) if retry_after_hdr else delay
+                        except (ValueError, TypeError):
+                            wait_time = delay
+                        await asyncio.sleep(max(wait_time, delay))
                         continue
                     resp.raise_for_status()
                     data = resp.json()
@@ -52,7 +58,7 @@ class LLMService:
                         "tool_calls": tool_calls
                     }
             except Exception as e:
-                if delay == delays[-1]:
+                if idx == len(delays) - 1:
                     raise e
                 await asyncio.sleep(delay)
         raise RuntimeError("Groq call exceeded max retries")

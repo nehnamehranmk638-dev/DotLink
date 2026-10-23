@@ -5,6 +5,26 @@ function getAuthHeader() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+export function formatErrorMessage(err, fallback = 'Operation failed') {
+  if (!err) return fallback;
+  if (typeof err.detail === 'string') return err.detail;
+  if (Array.isArray(err.detail)) {
+    return err.detail
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        const field = item.loc && item.loc.length > 1 ? item.loc[item.loc.length - 1] : '';
+        const msg = item.msg || 'Validation error';
+        return field ? `${field}: ${msg}` : msg;
+      })
+      .join(', ');
+  }
+  if (err.detail && typeof err.detail === 'object') {
+    return err.detail.msg || JSON.stringify(err.detail);
+  }
+  if (typeof err.message === 'string') return err.message;
+  return fallback;
+}
+
 export const api = {
   // Auth
   async signup(name, email, password, consentGiven) {
@@ -15,7 +35,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Signup failed');
+      throw new Error(formatErrorMessage(err, 'Signup failed'));
     }
     const data = await res.json();
     localStorage.setItem('dotlink_token', data.access_token);
@@ -31,7 +51,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Login failed');
+      throw new Error(formatErrorMessage(err, 'Login failed'));
     }
     const data = await res.json();
     localStorage.setItem('dotlink_token', data.access_token);
@@ -64,7 +84,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/children`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch children');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch children'));
+    }
     return res.json();
   },
 
@@ -76,7 +99,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to create child profile');
+      throw new Error(formatErrorMessage(err, 'Failed to create child profile'));
     }
     return res.json();
   },
@@ -90,7 +113,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to fetch and chunk NCERT chapter');
+      throw new Error(formatErrorMessage(err, 'Failed to fetch and chunk NCERT chapter'));
     }
     return res.json();
   },
@@ -99,7 +122,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/textbooks`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch textbooks');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch textbooks'));
+    }
     return res.json();
   },
 
@@ -107,7 +133,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/textbooks/${textbookId}/topics`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch topics');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch topics'));
+    }
     return res.json();
   },
 
@@ -115,7 +144,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/topics/${topicId}`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch topic');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch topic'));
+    }
     return res.json();
   },
 
@@ -126,7 +158,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to trigger lesson generation');
+      throw new Error(formatErrorMessage(err, 'Failed to trigger lesson generation'));
     }
     return res.json();
   },
@@ -135,7 +167,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/topics/${topicId}/agent-steps`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch agent trace');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch agent trace'));
+    }
     return res.json();
   },
 
@@ -143,7 +178,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/topics/${topicId}/lesson-bundle`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch lesson bundle');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch lesson bundle'));
+    }
     return res.json();
   },
 
@@ -153,7 +191,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
       body: JSON.stringify(patch)
     });
-    if (!res.ok) throw new Error('Failed to update lesson bundle');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to update lesson bundle'));
+    }
     return res.json();
   },
 
@@ -161,7 +202,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/topics/${topicId}/questions`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch questions');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch questions'));
+    }
     return res.json();
   },
 
@@ -171,7 +215,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
       body: JSON.stringify(patch)
     });
-    if (!res.ok) throw new Error('Failed to update question');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to update question'));
+    }
     return res.json();
   },
 
@@ -180,7 +227,10 @@ export const api = {
       method: 'DELETE',
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to delete question');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to delete question'));
+    }
     return res.json();
   },
 
@@ -188,7 +238,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/topics/${topicId}/source-pages`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch source pages');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch source pages'));
+    }
     return res.json();
   },
 
@@ -199,7 +252,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Approval blocked');
+      throw new Error(formatErrorMessage(err, 'Approval blocked'));
     }
     return res.json();
   },
@@ -211,7 +264,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
       body: JSON.stringify({ child_id: childId, topic_id: topicId })
     });
-    if (!res.ok) throw new Error('Failed to start/resume session');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to start/resume session'));
+    }
     return res.json();
   },
 
@@ -221,7 +277,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error('Failed to evaluate interaction');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to evaluate interaction'));
+    }
     return res.json();
   },
 
@@ -248,7 +307,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error('Failed to submit quiz');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to submit quiz'));
+    }
     return res.json();
   },
 
@@ -256,7 +318,10 @@ export const api = {
     const res = await fetch(`${API_BASE}/api/analytics/${childId}`, {
       headers: { ...getAuthHeader() }
     });
-    if (!res.ok) throw new Error('Failed to fetch analytics');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Failed to fetch analytics'));
+    }
     return res.json();
   },
 

@@ -16,9 +16,15 @@ export default function Login() {
     e.preventDefault();
     setError('');
 
-    if (isSignUp && !consentGiven) {
-      setError('Parent consent must be provided to create an account.');
-      return;
+    if (isSignUp) {
+      if (!consentGiven) {
+        setError('Parent consent must be provided to create an account.');
+        return;
+      }
+      if (password.length < 6) {
+        setError('Password must be at least 6 characters long.');
+        return;
+      }
     }
 
     setLoading(true);
@@ -50,7 +56,7 @@ export default function Login() {
         </div>
 
         {error && (
-          <div style={{ background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#fca5a5', padding: '12px', borderRadius: 'var(--radius-sm)', marginBottom: '20px', fontSize: '0.9rem' }}>
+          <div style={{ background: 'rgba(239, 68, 68, 0.2)', border: '1px solid rgba(239, 68, 68, 0.4)', color: '#fca5a5', padding: '12px', borderRadius: 'var(--radius-sm)', marginBottom: '20px', fontSize: '0.9rem', lineHeight: '1.4' }}>
             {error}
           </div>
         )}
@@ -83,12 +89,20 @@ export default function Login() {
           </div>
 
           <div className="form-group">
-            <label className="form-label">Password</label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <label className="form-label" style={{ marginBottom: 0 }}>Password</label>
+              {isSignUp && (
+                <span style={{ fontSize: '0.8rem', color: password.length > 0 && password.length < 6 ? '#fca5a5' : 'var(--text-muted)' }}>
+                  Min 6 characters {password.length > 0 ? `(${password.length}/6)` : ''}
+                </span>
+              )}
+            </div>
             <input
               type="password"
               className="form-input"
-              placeholder="••••••••"
+              placeholder={isSignUp ? "At least 6 characters" : "••••••••"}
               required
+              minLength={isSignUp ? 6 : undefined}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
