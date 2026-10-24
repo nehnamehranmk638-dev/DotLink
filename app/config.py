@@ -33,6 +33,23 @@ class Settings:
     AGENT_MAX_RETRIES: int = 2
     GROUNDING_FUZZY_THRESHOLD: float = 65.0  # RapidFuzz match ratio (0-100)
 
+    # Chunking Policy Constants
+    SMALL_CHAPTER_MAX_PAGES: int = 6
+    SMALL_CHAPTER_MAX_WORDS: int = 2500
+    TOPIC_TARGET_WORDS: int = 1200
+    TOPIC_MIN_WORDS: int = 800
+    TOPIC_MAX_WORDS: int = 1800
+
+    # Per-Topic Question & Scene Scaling
+    MIN_QUESTIONS_PER_TOPIC: int = 4
+    MAX_QUESTIONS_PER_TOPIC: int = 8
+    CHOICE_COUNT_MIN: int = 3
+    CHOICE_COUNT_MAX: int = 4
+    WORDS_PER_QUESTION: int = 200
+    WORDS_PER_SCENE_MIN: int = 150
+    WORDS_PER_SCENE_MAX: int = 250
+    QUESTION_RETRY_CAP: int = 2
+
     # Adaptive Engine Timing & Anti-Rushing Locks (in seconds)
     LOCK_SECONDS_QUESTION: float = 3.0  # Buttons locked on initial question display
     LOCK_SECONDS_RETRY: float = 2.0     # Buttons locked on retry after wrong answer

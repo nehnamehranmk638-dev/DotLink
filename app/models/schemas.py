@@ -79,6 +79,7 @@ class TopicOut(BaseModel):
     start_page: int
     end_page: int
     status: str
+    version: Optional[int] = 1
     created_at: str
 
 class SourcePageOut(BaseModel):
@@ -145,6 +146,8 @@ class AnimatedScene(BaseModel):
     title: str = Field(..., min_length=2)
     visual_description: str = Field(..., min_length=5)
     narration_text: str = Field(..., min_length=10)
+    narration_variants: Optional[Dict[str, str]] = None
+    interaction_beat: Optional[str] = None
 
 class HighlightedWord(BaseModel):
     word: str = Field(..., min_length=1)
@@ -159,6 +162,8 @@ class InVideoQuestion(BaseModel):
     hint_text: str = Field(..., min_length=3)
     explanation_text: str = Field(..., min_length=5)
     source_page: int = Field(..., ge=1)
+    evidence_quote: Optional[str] = None
+    difficulty: Optional[str] = "medium"
 
     @model_validator(mode="after")
     def check_correct_answer_in_options(self):
@@ -179,9 +184,9 @@ class MiniGameConfig(BaseModel):
     pairs: List[WordNumberPair] = Field(..., min_length=6, max_length=8)
 
 class SubmitLessonAndRevisionPayload(BaseModel):
-    scenes: List[AnimatedScene] = Field(..., min_length=4, max_length=8)
+    scenes: List[AnimatedScene] = Field(..., min_length=4, max_length=16)
     highlighted_words: List[HighlightedWord] = Field(..., min_length=1)
-    in_video_questions: List[InVideoQuestion] = Field(..., min_length=1)
+    in_video_questions: List[InVideoQuestion] = Field(..., min_length=1, max_length=16)
     revision_bullets: List[RevisionBullet] = Field(..., min_length=1)
     mini_game_config: MiniGameConfig
 
@@ -193,6 +198,8 @@ class QuizQuestion(BaseModel):
     hint_text: str = Field(..., min_length=3)
     explanation_text: str = Field(..., min_length=5)
     source_page: int = Field(..., ge=1)
+    evidence_quote: Optional[str] = None
+    difficulty: Optional[str] = "medium"
 
     @model_validator(mode="after")
     def check_correct_answer_in_options(self):

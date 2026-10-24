@@ -315,3 +315,216 @@ def test_run_code_backstop():
     assert "outside topic range" in processed[1]["flag_reason"]
     assert processed[2]["flagged"] is True
     assert "Low grounding score" in processed[2]["flag_reason"]
+
+# -------------------------------------------------------------------
+# New Chunking Policy & Question Scaling Validators Tests
+# -------------------------------------------------------------------
+from app.agents.validators import (
+    validate_single_correct_option,
+    validate_option_count,
+    calculate_expected_question_count,
+    validate_question_count_for_topic,
+    validate_grounding_evidence,
+    recompute_arithmetic_in_options,
+    validate_topic_chunk_policy,
+    validate_question_with_retry_and_flag
+)
+
+def test_validate_single_correct_option():
+    # Valid: exactly 1 matching option
+    q_valid = {
+        "question_text": "What material is used to construct arches?",
+        "options": ["Wedge bricks", "Soft grass", "Loose sand", "Ice cubes"],
+        "correct_answer": "Wedge bricks"
+    }
+    ok, err = validate_single_correct_option(q_valid)
+    assert ok is True
+    assert err is None
+
+    # Invalid: 0 matching options
+    q_no_match = {
+        "question_text": "What material is used to construct arches?",
+        "options": ["Wood", "Soft grass", "Loose sand"],
+        "correct_answer": "Wedge bricks"
+    }
+    ok, err = validate_single_correct_option(q_no_match)
+    assert ok is False
+    assert "does not appear in options" in err
+
+    # Invalid: multiple matching options
+    q_multi = {
+        "question_text": "Select correct answer",
+        "options": ["Brick", "Stone", "Brick", "Wood"],
+        "correct_answer": "Brick"
+    }
+    ok, err = validate_single_correct_option(q_multi)
+    assert ok is False
+    assert "Multiple options" in err
+
+def test_validate_option_count():
+    # 3 options (allowed)
+    q3 = {"options": ["A", "B", "C"], "correct_answer": "A"}
+    ok, err = validate_option_count(q3, min_count=3, max_count=4)
+    assert ok is True
+
+    # 4 options (allowed)
+    q4 = {"options": ["A", "B", "C", "D"], "correct_answer": "A"}
+    ok, err = validate_option_count(q4, min_count=3, max_count=4)
+    assert ok is True
+
+    # 2 options (too few)
+    q2 = {"options": ["A", "B"], "correct_answer": "A"}
+    ok, err = validate_option_count(q2, min_count=3, max_count=4)
+    assert ok is False
+    assert "outside allowed range" in err
+
+    # 5 options (too many)
+    q5 = {"options": ["A", "B", "C", "D", "E"], "correct_answer": "A"}
+    ok, err = validate_option_count(q5, min_count=3, max_count=4)
+    assert ok is False
+    assert "outside allowed range" in err
+
+    # Duplicate options (must fail)
+    q_dup = {"options": ["Arch", "Wall", "Floor", "Arch"], "correct_answer": "Arch"}
+    ok, err = validate_option_count(q_dup, min_count=3, max_count=4)
+    assert ok is False
+    assert "contain duplicates" in err
+
+def test_validate_question_count_for_topic():
+    # Expected question scaling calculation
+    assert calculate_expected_question_count(800) == 4
+    assert calculate_expected_question_count(1200) == 6
+    assert calculate_expected_question_count(1600) == 8
+    assert calculate_expected_question_count(2500) == 8
+    assert calculate_expected_question_count(300) == 4
+
+    # 4 to 8 questions allowed
+    ok, err = validate_question_count_for_topic([1, 2, 3, 4, 5, 6], word_count=1200)
+    assert ok is True
+
+    # Too few (< 4)
+    ok, err = validate_question_count_for_topic([1, 2, 3], word_count=1200)
+    assert ok is False
+    assert "outside allowed bounds" in err
+
+    # Too many (> 8)
+    ok, err = validate_question_count_for_topic(list(range(9)), word_count=1800)
+    assert ok is False
+    assert "outside allowed bounds" in err
+
+def test_validate_grounding_evidence():
+    pages_map = {
+        1: "Murshidabad brick patterns display arches built with wedge-shaped stones.",
+        2: "Floor circles feature central symmetry and radial alignment."
+    }
+    # Valid grounding with evidence quote
+    q_good = {
+        "question_text": "What stones are used in Murshidabad arches?",
+        "options": ["Wedge-shaped stones", "Flat glass", "Clay mud"],
+        "correct_answer": "Wedge-shaped stones",
+        "evidence_quote": "arches built with wedge-shaped stones",
+        "source_page": 1
+    }
+    ok, err = validate_grounding_evidence(q_good, pages_map, start_page=1, end_page=2)
+    assert ok is True
+
+    # Outside page range
+    q_out_page = dict(q_good, source_page=5)
+    ok, err = validate_grounding_evidence(q_out_page, pages_map, start_page=1, end_page=2)
+    assert ok is False
+    assert "outside topic page range" in err
+
+    # Ungrounded quote
+    q_bad_quote = dict(q_good, evidence_quote="Quantum electrodynamics in black hole event horizons")
+    ok, err = validate_grounding_evidence(q_bad_quote, pages_map, start_page=1, end_page=2)
+    assert ok is False
+    assert "below threshold" in err
+
+def test_recompute_arithmetic_in_options():
+    # Correct arithmetic
+    q_correct_math = {
+        "question_text": "If a mason lays 12 bricks per row across 5 rows, how many bricks are laid (12 * 5)?",
+        "options": ["60 bricks", "50 bricks", "70 bricks"],
+        "correct_answer": "60 bricks"
+    }
+    ok, err = recompute_arithmetic_in_options(q_correct_math)
+    assert ok is True
+
+    # Incorrect arithmetic designating wrong answer
+    q_wrong_math = {
+        "question_text": "What is 12 + 15?",
+        "options": ["27", "30", "25"],
+        "correct_answer": "30"
+    }
+    ok, err = recompute_arithmetic_in_options(q_wrong_math)
+    assert ok is False
+    assert "Arithmetic mismatch" in err
+
+    # Non-math question passes cleanly
+    q_non_math = {
+        "question_text": "What shape is the arch?",
+        "options": ["Curved", "Square", "Straight"],
+        "correct_answer": "Curved"
+    }
+    ok, err = recompute_arithmetic_in_options(q_non_math)
+    assert ok is True
+
+def test_validate_topic_chunk_policy():
+    # Small chapter: 4 pages, 1500 words must produce exactly 1 topic
+    small_single = [{"name": "Chapter 1", "word_count": 1500}]
+    ok, err = validate_topic_chunk_policy(small_single, chapter_pages_count=4, chapter_word_count=1500)
+    assert ok is True
+
+    # Small chapter producing 2 topics must fail
+    small_multi = [{"name": "Part 1", "word_count": 750}, {"name": "Part 2", "word_count": 750}]
+    ok, err = validate_topic_chunk_policy(small_multi, chapter_pages_count=4, chapter_word_count=1500)
+    assert ok is False
+    assert "must produce exactly 1 topic" in err
+
+    # Large chapter: no topic below TOPIC_MIN_WORDS (800)
+    large_valid = [
+        {"name": "Topic 1", "word_count": 1200},
+        {"name": "Topic 2", "word_count": 1100},
+        {"name": "Topic 3", "word_count": 1400}
+    ]
+    ok, err = validate_topic_chunk_policy(large_valid, chapter_pages_count=20, chapter_word_count=3700)
+    assert ok is True
+
+    # Large chapter: topic below TOPIC_MIN_WORDS must fail
+    large_invalid = [
+        {"name": "Topic 1", "word_count": 1200},
+        {"name": "Topic 2", "word_count": 650}  # below 800
+    ]
+    ok, err = validate_topic_chunk_policy(large_invalid, chapter_pages_count=20, chapter_word_count=3200)
+    assert ok is False
+    assert "below TOPIC_MIN_WORDS" in err
+
+def test_validate_question_with_retry_and_flag():
+    pages_map = {1: "Arches in ancient buildings are constructed from curved wedge-shaped stones."}
+    valid_q = {
+        "question_text": "What stones are used to construct arches?",
+        "options": ["Curved wedge-shaped stones", "Flat glass panels", "Cardboard boxes", "Mud bricks"],
+        "correct_answer": "Curved wedge-shaped stones",
+        "evidence_quote": "constructed from curved wedge-shaped stones",
+        "source_page": 1
+    }
+    # Valid question: no retry, not flagged
+    res = validate_question_with_retry_and_flag(valid_q, pages_map, start_page=1, end_page=2, retry_count=0)
+    assert res["valid"] is True
+    assert res["retry_needed"] is False
+    assert res["flagged"] is False
+
+    # Invalid question (no correct answer in options) on first attempt (retry_count=0): retry needed
+    bad_q = dict(valid_q, correct_answer="Non-existent answer")
+    res_retry = validate_question_with_retry_and_flag(bad_q, pages_map, start_page=1, end_page=2, retry_count=0)
+    assert res_retry["valid"] is False
+    assert res_retry["retry_needed"] is True
+    assert res_retry["flagged"] is False
+
+    # Invalid question after retry cap reached (retry_count=2): flagged for parent
+    res_flagged = validate_question_with_retry_and_flag(bad_q, pages_map, start_page=1, end_page=2, retry_count=2)
+    assert res_flagged["valid"] is False
+    assert res_flagged["retry_needed"] is False
+    assert res_flagged["flagged"] is True
+    assert "does not appear in options" in res_flagged["flag_reason"]
+

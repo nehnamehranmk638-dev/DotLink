@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from typing import Dict, Any, List, Optional
 from app.config import settings
@@ -13,7 +14,8 @@ from app.models.schemas import (
     MiniGameConfig
 )
 from app.agents.loop import run_agent_loop, log_agent_step
-from app.agents.tools import check_reading_level
+from app.agents.tools import check_reading_level, count_words
+from app.agents.validators import validate_question_with_retry_and_flag
 
 AGENT_2_TOOLS = [
     {
@@ -130,55 +132,130 @@ AGENT_2_TOOLS = [
     }
 ]
 
-def build_deterministic_lesson(topic_name: str, subject_tag: str, start_page: int, end_page: int) -> SubmitLessonAndRevisionPayload:
-    """Fallback generator for offline testing or development without LLM keys."""
-    scenes = [
-        AnimatedScene(
-            scene_num=1,
-            title=f"Welcome to {topic_name}",
-            visual_description=f"A bright animated laboratory introducing fundamental concepts of {topic_name} with playful floating icons.",
-            narration_text=f"Hello explorer! Today we are learning about {topic_name}. Look closely at the clues and concepts on screen!"
-        ),
-        AnimatedScene(
-            scene_num=2,
-            title="Core Patterns and Rules",
-            visual_description="Interactive diagrams showing the main rules, step-by-step illustrations, and colorful highlight badges.",
-            narration_text=f"Every problem has a pattern. In {subject_tag}, when we observe carefully, we find rules that make everything simple."
-        ),
-        AnimatedScene(
-            scene_num=3,
-            title="Real-World Connections",
-            visual_description="A bustling cityscape and nature view highlighting where these concepts appear in daily life.",
-            narration_text="Did you know these ideas are used by builders, scientists, and artists all over the world every single day?"
-        ),
-        AnimatedScene(
-            scene_num=4,
-            title="Mastery Summary",
-            visual_description="A sparkling trophy and summary board displaying the key takeaways with confetti.",
-            narration_text="Great work! You now know the key ideas. Let us review the key points and test our understanding."
-        )
+def build_deterministic_lesson(
+    topic_name: str,
+    subject_tag: str,
+    start_page: int,
+    end_page: int,
+    word_count: int = 1200,
+    pages_map: Optional[Dict[int, str]] = None
+) -> SubmitLessonAndRevisionPayload:
+    """
+    Fallback generator for offline testing or development without LLM keys.
+    Generates:
+    - Scenes: roughly 1 scene per 150-250 words of source text, each with interaction beat & 3 variants (standard, simplified, short).
+    - Questions: 4 to 8 questions (~1 per 200 words), 3-4 options, 1 correct option, grounded in topic text.
+    """
+    avg_words_per_scene = (settings.WORDS_PER_SCENE_MIN + settings.WORDS_PER_SCENE_MAX) / 2
+    num_scenes = max(4, min(12, round(word_count / avg_words_per_scene)))
+    num_questions = min(
+        settings.MAX_QUESTIONS_PER_TOPIC,
+        max(settings.MIN_QUESTIONS_PER_TOPIC, round(word_count / settings.WORDS_PER_QUESTION))
+    )
+
+    scene_titles = [
+        f"Welcome to {topic_name}",
+        "Core Patterns and Rules",
+        "Step-by-Step Exploration",
+        "Worked Example and Practice",
+        "Real-World Connections",
+        "Common Traps and Solutions",
+        "Application Challenge",
+        "Mastery Summary"
     ]
+
+    scenes = []
+    for s_idx in range(num_scenes):
+        s_num = s_idx + 1
+        stitle = scene_titles[s_idx] if s_idx < len(scene_titles) else f"{topic_name}: Part {s_num}"
+        std_narration = f"Welcome to stage {s_num} of {topic_name}. Look closely at the patterns on screen and apply the core principles."
+        scenes.append(AnimatedScene(
+            scene_num=s_num,
+            title=stitle,
+            visual_description=f"Playful animation featuring Sparky demonstrating {stitle} with diagrams and floating highlight points.",
+            narration_text=std_narration,
+            narration_variants={
+                "standard": std_narration,
+                "simplified": f"Look at stage {s_num}. Follow the simple steps to understand {topic_name} easily.",
+                "short": f"Stage {s_num}: Find the pattern and solve."
+            },
+            interaction_beat="Tap the pulsing highlighted concept on screen to see its step-by-step rule."
+        ))
+
     words = [
         HighlightedWord(word="Pattern", key_point="A repeated design or sequence that follows a rule", scene_num=1),
         HighlightedWord(word="Rule", key_point="A set guideline that helps us calculate or understand facts", scene_num=2),
-        HighlightedWord(word="Concept", key_point="The foundational idea behind the topic", scene_num=3)
+        HighlightedWord(word="Concept", key_point="The foundational idea behind the topic", scene_num=min(3, num_scenes))
     ]
-    in_video_q = [
-        InVideoQuestion(
-            scene_num=2,
-            question_text=f"What is the most helpful strategy when studying {topic_name}?",
-            options=["Look for patterns and rules", "Rush without reading", "Ignore the examples", "Guess randomly"],
-            correct_answer="Look for patterns and rules",
-            hint_text="Remember what scene 2 explained about observing carefully.",
-            explanation_text="Observing carefully to find patterns and rules helps solve problems easily.",
-            source_page=start_page
-        )
-    ]
+
+    pages_list = sorted(pages_map.keys()) if pages_map else list(range(start_page, end_page + 1))
+    if not pages_list:
+        pages_list = [start_page]
+
+    in_video_q = []
+    for q_idx in range(num_questions):
+        q_num = q_idx + 1
+        src_p = pages_list[q_idx % len(pages_list)]
+        p_text = (pages_map or {}).get(src_p, "")
+
+        # Extract evidence sentence if available
+        evidence_candidate = ""
+        if p_text:
+            sentences = [s.strip() for s in re.split(r'[.!?]+', p_text) if len(s.strip()) > 15]
+            if sentences:
+                evidence_candidate = sentences[q_idx % len(sentences)]
+        if not evidence_candidate:
+            evidence_candidate = f"Foundational principle of {topic_name} on page {src_p}."
+
+        diff = "application" if q_num == num_questions else ("easy" if q_num in (1, 3) else "medium")
+        scene_assigned = min(num_scenes, max(1, round(q_num * num_scenes / num_questions)))
+        opt_count = settings.CHOICE_COUNT_MAX if (q_idx % 2 == 0) else settings.CHOICE_COUNT_MIN
+
+        if diff == "application":
+            q_text = f"Application Question {q_num}: How can we apply the concepts of {topic_name} to solve real-world problems?"
+            corr = f"Apply the step-by-step method shown in {topic_name}"
+            distractors = [
+                f"Ignore the patterns described in {topic_name}",
+                "Guess the outcome without verifying calculations",
+                "Skip the core rules and rush ahead"
+            ]
+        elif diff == "easy":
+            q_text = f"Concept Check {q_num}: What is the primary definition introduced in {topic_name}?"
+            corr = f"A fundamental rule for {topic_name}"
+            distractors = [
+                f"An unrelated property outside {topic_name}",
+                "A random occurrence with no structure",
+                "A decorative element without mathematical purpose"
+            ]
+        else:
+            q_text = f"Practice Question {q_num}: When analyzing {topic_name}, what pattern should we look for?"
+            corr = f"The repeating structure explained on page {src_p}"
+            distractors = [
+                f"Contradictory assumptions from outside {topic_name}",
+                "Arbitrary numbers without any sequence",
+                "Disorganized items with no relationship"
+            ]
+
+        needed_distractors = distractors[:opt_count - 1]
+        options = [corr] + needed_distractors
+
+        in_video_q.append(InVideoQuestion(
+            scene_num=scene_assigned,
+            question_text=q_text,
+            options=options,
+            correct_answer=corr,
+            hint_text=f"Review the key principle introduced around scene {scene_assigned}.",
+            explanation_text=f"'{corr}' accurately reflects the explanation grounded in the textbook.",
+            source_page=src_p,
+            evidence_quote=evidence_candidate,
+            difficulty=diff
+        ))
+
     bullets = [
         RevisionBullet(bullet_num=1, scene_num=1, text=f"{topic_name} introduces the foundational concepts."),
-        RevisionBullet(bullet_num=2, scene_num=2, text="Recognizing patterns allows for quick and accurate understanding."),
-        RevisionBullet(bullet_num=3, scene_num=3, text="Concepts connect directly to real-world applications."),
-        RevisionBullet(bullet_num=4, scene_num=4, text="Reviewing core takeaways guarantees solid mastery.")
+        RevisionBullet(bullet_num=2, scene_num=min(2, num_scenes), text="Recognizing patterns allows for quick and accurate understanding."),
+        RevisionBullet(bullet_num=3, scene_num=min(3, num_scenes), text="Concepts connect directly to real-world applications."),
+        RevisionBullet(bullet_num=4, scene_num=num_scenes, text="Reviewing core takeaways guarantees solid mastery.")
     ]
     pairs = [
         WordNumberPair(left="Pattern", right="Repeated design"),
@@ -218,6 +295,10 @@ async def run_lesson_and_revision_agent(
     """, (topic["textbook_id"], topic["start_page"], topic["end_page"]))
     pages_rows = await cursor.fetchall()
     pages_map = {r["page_number"]: r["text"] for r in pages_rows}
+    all_text = "\n".join(pages_map.values())
+    word_count = count_words(all_text)
+    if word_count == 0:
+        word_count = 1200
 
     # Fetch textbook grade
     tb_cursor = await db.execute("SELECT grade FROM textbooks WHERE id = ?", (topic["textbook_id"],))
@@ -238,14 +319,17 @@ async def run_lesson_and_revision_agent(
         return {"error": f"Unknown tool {name}"}
 
     page_snippet = "\n\n".join([f"--- Page {p} ---\n{txt}" for p, txt in sorted(pages_map.items())])
+    expected_q_count = min(settings.MAX_QUESTIONS_PER_TOPIC, max(settings.MIN_QUESTIONS_PER_TOPIC, round(word_count / settings.WORDS_PER_QUESTION)))
+    expected_scenes_count = max(4, min(12, round(word_count / 200)))
+
     system_prompt = (
         f"You are Agent 2 (Lesson & Revision Script Agent). You create interactive, child-safe animated lesson scripts "
         f"for Grade {grade} students based strictly on the NCERT textbook source pages.\n"
-        f"Topic: {topic['name']} (Pages {topic['start_page']} to {topic['end_page']}).\n"
+        f"Topic: {topic['name']} (Pages {topic['start_page']} to {topic['end_page']}, ~{word_count} words).\n"
         f"Requirements:\n"
-        f"1. 4 to 8 animated scenes (scene_num, title, visual_description, narration_text).\n"
-        f"2. Highlighted active-listening words per scene (word, key_point, scene_num) that pulse for the child to click.\n"
-        f"3. 1 to 3 mid-lesson pop-up in-video questions (scene_num, question_text, 3-4 options, correct_answer, hint_text, explanation_text, source_page).\n"
+        f"1. {expected_scenes_count} animated scenes (roughly 1 scene per 150-250 words) with visual_description and narration_text.\n"
+        f"2. Highlighted active-listening words per scene (word, key_point, scene_num).\n"
+        f"3. {expected_q_count} pop-up in-video questions (3-4 options, exactly ONE correct answer, distractors from topic terms, source_page, evidence_quote).\n"
         f"4. Revision bullets linked to scenes.\n"
         f"5. mini_game_config with 6 to 8 matching word/number pairs.\n"
         f"Immediately call 'submit_lesson_and_revision' with the complete payload."
@@ -257,7 +341,7 @@ async def run_lesson_and_revision_agent(
     ]
 
     if not settings.GROQ_API_KEY and not settings.GEMINI_API_KEY:
-        lesson_data = build_deterministic_lesson(topic["name"], topic["subject_tag"], topic["start_page"], topic["end_page"])
+        lesson_data = build_deterministic_lesson(topic["name"], topic["subject_tag"], topic["start_page"], topic["end_page"], word_count, pages_map)
     else:
         try:
             lesson_data = await run_agent_loop(
@@ -277,7 +361,7 @@ async def run_lesson_and_revision_agent(
                 await log_agent_step(db, run_id, topic_id, "lesson_revision_agent", 99, "fallback_lesson", {}, f"LLM error: {str(e)[:150]}. Using deterministic lesson.")
             except Exception:
                 pass
-            lesson_data = build_deterministic_lesson(topic["name"], topic["subject_tag"], topic["start_page"], topic["end_page"])
+            lesson_data = build_deterministic_lesson(topic["name"], topic["subject_tag"], topic["start_page"], topic["end_page"], word_count, pages_map)
 
     # Save lesson bundle to DB
     bundle_id = str(uuid.uuid4())
@@ -292,19 +376,30 @@ async def run_lesson_and_revision_agent(
         VALUES (?, ?, ?, ?, ?, 'ready')
     """, (bundle_id, topic_id, json.dumps(scenes_json), json.dumps(bullets_json), json.dumps(mini_game_json)))
 
-    # Save in-video questions to DB
+    # Save in-video questions to DB with validation and code backstop
     await db.execute("DELETE FROM questions WHERE topic_id = ? AND question_type = 'in_video'", (topic_id,))
     for q in lesson_data.in_video_questions:
+        val_res = validate_question_with_retry_and_flag(q, pages_map, topic["start_page"], topic["end_page"])
         q_id = str(uuid.uuid4())
         q_data = {
             "question_text": q.question_text,
             "options": q.options,
-            "scene_num": q.scene_num
+            "scene_num": q.scene_num,
+            "evidence_quote": q.evidence_quote,
+            "difficulty": q.difficulty
         }
         await db.execute("""
-            INSERT INTO questions (id, topic_id, question_type, question_data, correct_answer, hint_text, explanation_text, source_page, status, flagged, flag_reason)
-            VALUES (?, ?, 'in_video', ?, ?, ?, ?, ?, 'active', 0, NULL)
-        """, (q_id, topic_id, json.dumps(q_data), q.correct_answer, q.hint_text, q.explanation_text, q.source_page))
+            INSERT INTO questions (
+                id, topic_id, question_type, question_data, correct_answer,
+                hint_text, explanation_text, source_page, status, flagged, flag_reason
+            )
+            VALUES (?, ?, 'in_video', ?, ?, ?, ?, ?, 'active', ?, ?)
+        """, (
+            q_id, topic_id, json.dumps(q_data), q.correct_answer,
+            q.hint_text, q.explanation_text, q.source_page,
+            1 if val_res["flagged"] else 0, val_res["flag_reason"]
+        ))
 
     await db.commit()
     return lesson_data
+

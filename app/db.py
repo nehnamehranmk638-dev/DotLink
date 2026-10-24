@@ -73,6 +73,7 @@ async def init_db():
             start_page INTEGER NOT NULL,
             end_page INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'chunked',
+            version INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         """)
@@ -195,6 +196,8 @@ async def init_db():
             await db.execute("ALTER TABLE topics ADD COLUMN topic_number INTEGER NOT NULL DEFAULT 1;")
         if "description" not in topic_cols:
             await db.execute("ALTER TABLE topics ADD COLUMN description TEXT;")
+        if "version" not in topic_cols:
+            await db.execute("ALTER TABLE topics ADD COLUMN version INTEGER NOT NULL DEFAULT 1;")
 
         await db.commit()
     finally:

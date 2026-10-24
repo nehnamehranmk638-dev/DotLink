@@ -10,6 +10,7 @@ from app.models.schemas import (
     SubTopicChunk
 )
 from app.agents.loop import run_agent_loop, log_agent_step
+from app.agents.tools import split_sections
 
 CHUNKING_AGENT_TOOLS = [
     {
@@ -50,6 +51,21 @@ CHUNKING_AGENT_TOOLS = [
                     "query": {"type": "string", "description": "Search keyword or phrase, e.g. 'Chapter 1' or 'Big Numbers'"}
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "split_sections",
+            "description": "Measures chapter pages and splits into topics according to chunking policy (small chapter = 1 topic, large chapter = ~1200 word topics).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start_page": {"type": "integer"},
+                    "end_page": {"type": "integer"}
+                },
+                "required": ["start_page", "end_page"]
             }
         }
     },
@@ -249,51 +265,19 @@ def extract_curriculum_structure(
     detected_chapters[-1]['end_page'] = max(detected_chapters[-1]['start_page'], last_page)
 
     for c in detected_chapters:
-        if not c['topics']:
-            c_pages = [p for p in content_pages if c['start_page'] <= p['page_number'] <= c['end_page']]
-            topics = []
-            for p in c_pages:
-                p_lines = clean_page_lines(p['text'])
-                candidate_title = None
-                for pl in p_lines[:4]:
-                    if not chap_re.search(pl) and 4 < len(pl) < 60 and not pl.endswith('.'):
-                        candidate_title = pl
-                        break
-                if candidate_title and not any(t['name'].lower() == candidate_title.lower() for t in topics):
-                    topics.append({
-                        'topic_number': len(topics) + 1,
-                        'name': candidate_title,
-                        'summary': f"Exploration of {candidate_title}.",
-                        'start_page': p['page_number'],
-                        'end_page': p['page_number']
-                    })
-            if not topics:
-                span = max(1, c['end_page'] - c['start_page'] + 1)
-                mid = c['start_page'] + max(0, span // 2 - 1)
-                topics = [
-                    {
-                        'topic_number': 1,
-                        'name': f"{c['chapter_title']} - Foundations",
-                        'summary': f"Foundational concepts and principles in {c['chapter_title']}.",
-                        'start_page': c['start_page'],
-                        'end_page': mid
-                    },
-                    {
-                        'topic_number': 2,
-                        'name': f"{c['chapter_title']} - Applications",
-                        'summary': f"Hands-on practice and application problems in {c['chapter_title']}.",
-                        'start_page': min(c['end_page'], mid + 1),
-                        'end_page': c['end_page']
-                    }
-                ]
-            c['topics'] = topics
-
-        # Align sub-topic end pages
-        for i, t in enumerate(c['topics']):
-            if i < len(c['topics']) - 1:
-                t['end_page'] = max(t['start_page'], c['topics'][i+1]['start_page'] - 1)
-            else:
-                t['end_page'] = max(t['start_page'], c['end_page'])
+        c_pages = [p for p in content_pages if c['start_page'] <= p['page_number'] <= c['end_page']]
+        section_topics = split_sections(c_pages, chapter_title=c['chapter_title'], chapter_number=c['chapter_number'])
+        c['topics'] = [
+            {
+                'topic_number': st['topic_number'],
+                'name': st['name'],
+                'summary': st.get('summary', f"Exploration of {st['name']}."),
+                'start_page': st['start_page'],
+                'end_page': st['end_page'],
+                'decision_trace': st.get('decision_trace', '')
+            }
+            for st in section_topics
+        ]
 
     final_chapters = []
     for c in detected_chapters:
@@ -385,7 +369,11 @@ async def run_textbook_chunking_agent(
                     })
                     if len(matches) >= 8:
                         break
-            return {"results": matches}
+        elif name == "split_sections":
+            sp = max(1, args.get("start_page", 1))
+            ep = max(sp, args.get("end_page", page_count))
+            subset_pages = [p for p in pages_rows if sp <= p["page_number"] <= ep]
+            return {"topics": split_sections(subset_pages, textbook_title)}
 
         return {"error": f"Unknown tool: {name}"}
 
@@ -452,10 +440,44 @@ async def run_textbook_chunking_agent(
     if hierarchy_result is None:
         hierarchy_result = detected_hierarchy
 
-    # Clean existing topics for this textbook (ensures idempotency and removes stale chunks)
-    await db.execute("DELETE FROM topics WHERE textbook_id = ?", (textbook_id,))
+    # Log trace decision lines for each chapter in plain words
+    step_ctr = 1
+    for chapter in hierarchy_result.chapters:
+        num_topics = len(chapter.topics)
+        decision_line = f"Chapter is long, split into {num_topics} topics" if num_topics > 1 else "Chapter is short, kept as one topic"
+        try:
+            await log_agent_step(
+                db, run_id, None, "chunking_agent", step_ctr, "split_sections",
+                {"chapter_number": chapter.chapter_number, "chapter_title": chapter.chapter_title, "topics_count": num_topics},
+                decision_line
+            )
+            step_ctr += 1
+        except Exception:
+            pass
 
-    # Persist topics hierarchically to topics table with status 'chunked'
+    # Existing data preservation:
+    # Do not delete approved content. If chapter already generated with old split, keep as-is until parent re-runs.
+    # New output from a re-run shows as a new version needing parent approval, old approved version stays live.
+    cursor_app = await db.execute("SELECT id FROM topics WHERE textbook_id = ? AND status = 'approved'", (textbook_id,))
+    approved_rows = await cursor_app.fetchall()
+    has_approved = len(approved_rows) > 0
+
+    cursor_v = await db.execute("SELECT MAX(version) as max_v FROM topics WHERE textbook_id = ?", (textbook_id,))
+    v_row = await cursor_v.fetchone()
+    current_max_v = (v_row["max_v"] or 1) if v_row else 1
+
+    if has_approved:
+        # Keep existing approved content untouched! Delete only unapproved drafts of this textbook.
+        await db.execute("DELETE FROM topics WHERE textbook_id = ? AND status != 'approved'", (textbook_id,))
+        topic_version = current_max_v + 1
+        initial_status = 'needs_review'
+    else:
+        # Clean unapproved draft topics for this textbook
+        await db.execute("DELETE FROM topics WHERE textbook_id = ?", (textbook_id,))
+        topic_version = 1
+        initial_status = 'chunked'
+
+    # Persist topics hierarchically to topics table
     created_topics = []
     for chapter in hierarchy_result.chapters:
         for topic_item in chapter.topics:
@@ -463,13 +485,13 @@ async def run_textbook_chunking_agent(
             await db.execute("""
                 INSERT INTO topics (
                     id, textbook_id, chapter_number, chapter_title, chapter_name,
-                    topic_number, name, description, subject_tag, start_page, end_page, status
+                    topic_number, name, description, subject_tag, start_page, end_page, status, version
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'chunked')
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 top_id, textbook_id, chapter.chapter_number, chapter.chapter_title, chapter.chapter_title,
                 topic_item.topic_number, topic_item.name, topic_item.summary, hierarchy_result.subject_tag,
-                topic_item.start_page, topic_item.end_page
+                topic_item.start_page, topic_item.end_page, initial_status, topic_version
             ))
 
             # Associate source pages in this range with the topic
@@ -490,7 +512,8 @@ async def run_textbook_chunking_agent(
                 "subject_tag": hierarchy_result.subject_tag,
                 "start_page": topic_item.start_page,
                 "end_page": topic_item.end_page,
-                "status": "chunked"
+                "status": initial_status,
+                "version": topic_version
             })
 
     await db.commit()

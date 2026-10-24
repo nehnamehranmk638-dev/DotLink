@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS topics (
     start_page INTEGER NOT NULL,
     end_page INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'chunked',
+    version INTEGER NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_topics_textbook ON topics(textbook_id);
