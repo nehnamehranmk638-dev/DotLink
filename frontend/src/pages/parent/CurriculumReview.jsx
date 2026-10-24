@@ -144,13 +144,22 @@ export default function CurriculumReview() {
         </div>
 
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <button
-            className="btn btn-success btn-lg"
-            onClick={handleApprove}
-            disabled={approving}
-          >
-            ✓ Approve Topic
-          </button>
+          {topic.status === 'approved' ? (
+            <button
+              className="btn btn-primary btn-lg"
+              onClick={() => navigate('/play')}
+            >
+              ▶ Play in Child Mode
+            </button>
+          ) : (
+            <button
+              className="btn btn-success btn-lg"
+              onClick={handleApprove}
+              disabled={approving}
+            >
+              ✓ Approve Topic
+            </button>
+          )}
         </div>
       </div>
 

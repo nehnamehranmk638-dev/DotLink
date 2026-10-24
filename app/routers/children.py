@@ -47,6 +47,16 @@ async def list_children(
             (parent["id"],)
         )
         rows = await cursor.fetchall()
+        if not rows:
+            child_id = str(uuid.uuid4())
+            default_name = f"{parent['name'].split()[0]}'s Learner" if parent.get('name') else "Learner"
+            await db.execute("""
+                INSERT INTO children (id, parent_id, name, age, grade, mascot_name, total_stars)
+                VALUES (?, ?, ?, 9, 4, 'Luna the Owl', 0)
+            """, (child_id, parent["id"], default_name))
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM children WHERE id = ?", (child_id,))
+            rows = await cursor.fetchall()
         return [
             ChildOut(
                 id=r["id"],

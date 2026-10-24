@@ -35,7 +35,6 @@ export default function Curriculum() {
   // PDF Upload & Chunking Form
   const [grade, setGrade] = useState(4);
   const [subjectTag, setSubjectTag] = useState('Maths');
-  const [textbookTitle, setTextbookTitle] = useState('');
   const [pdfFile, setPdfFile] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
@@ -146,20 +145,18 @@ export default function Curriculum() {
     try {
       const formData = new FormData();
       formData.append('file', pdfFile);
-      formData.append('grade', grade);
-      formData.append('subject_tag', subjectTag);
-      if (textbookTitle.trim()) {
-        formData.append('title', textbookTitle.trim());
+      if (grade || activeChild?.grade) {
+        formData.append('grade', grade || activeChild?.grade || 4);
       }
+      formData.append('subject_tag', subjectTag);
 
       const res = await api.uploadAndChunkTextbook(formData);
       const chCount = res.chapters ? res.chapters.length : 1;
       const topCount = res.topics ? res.topics.length : 0;
-      setStatusMessage(`Success! Organized "${res.title || textbookTitle}" into ${chCount} Chapter(s) and ${topCount} Sub-Topics.`);
+      setStatusMessage(`Success! Organized "${res.title}" into ${chCount} Chapter(s) and ${topCount} Sub-Topics.`);
       
-      // Reset upload inputs
+      // Reset upload input
       setPdfFile(null);
-      setTextbookTitle('');
 
       // Reload textbooks and auto-select new textbook
       await loadData(res.textbook_id);
@@ -187,7 +184,7 @@ export default function Curriculum() {
           const t = fresh.find((item) => item.id === topicId);
           if (t && t.status !== 'generating') {
             clearInterval(interval);
-            setStatusMessage(`Lesson generated for "${t.name}"! Ready for parent review.`);
+            setStatusMessage(`Lesson generated for "${t.name}"! It is now live in Child Play Mode.`);
           }
         }
       }, 3000);
@@ -348,32 +345,6 @@ export default function Curriculum() {
           </p>
 
           <form onSubmit={handleUploadAndChunk}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '12px', marginBottom: '14px' }}>
-              <div className="form-group">
-                <label className="form-label">Grade</label>
-                <select
-                  className="form-select"
-                  value={grade}
-                  onChange={(e) => setGrade(Number(e.target.value))}
-                >
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((g) => (
-                    <option key={g} value={g}>Grade {g}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Textbook Title (Optional)</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. NCERT Math-Magic (or from filename)"
-                  value={textbookTitle}
-                  onChange={(e) => setTextbookTitle(e.target.value)}
-                />
-              </div>
-            </div>
-
             {/* Subject Tag Selector */}
             <div className="form-group" style={{ marginBottom: '16px' }}>
               <label className="form-label">Subject Tag:</label>
@@ -603,12 +574,23 @@ export default function Curriculum() {
                                 )}
 
                                 {(t.status === 'needs_review' || t.status === 'approved') && (
-                                  <button
-                                    className="btn btn-success"
-                                    onClick={() => navigate(`/review/${t.id}`)}
-                                  >
-                                    📋 Review & Approve Content
-                                  </button>
+                                  <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button
+                                      className="btn btn-success"
+                                      style={{ flex: 1 }}
+                                      onClick={() => navigate('/play')}
+                                    >
+                                      ▶ Play in Child Mode
+                                    </button>
+                                    <button
+                                      className="btn btn-secondary"
+                                      style={{ padding: '6px 12px', fontSize: '0.85rem' }}
+                                      onClick={() => navigate(`/review/${t.id}`)}
+                                      title="Preview script and quiz questions"
+                                    >
+                                      👁️ Preview
+                                    </button>
+                                  </div>
                                 )}
 
                                 <button

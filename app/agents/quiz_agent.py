@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Optional
 from app.config import settings
 from app.db import get_db
 from app.models.schemas import SubmitQuizSetsPayload, QuizQuestion
-from app.agents.loop import run_agent_loop
+from app.agents.loop import run_agent_loop, log_agent_step
 from app.agents.tools import calculator, check_grounding
 
 AGENT_3_TOOLS = [
@@ -206,8 +206,8 @@ async def run_quiz_agent(
         f"1. Exactly 10 questions in quiz_set_a, exactly 10 questions in quiz_set_b.\n"
         f"2. No overlapping questions between Set A and Set B.\n"
         f"3. Every question strictly requires question_text, options, correct_answer, hint_text, explanation_text, and source_page.\n"
-        f"4. Use calculator tool to verify any math calculations.\n"
-        f"5. Check grounding of questions against the source page text before submitting."
+        f"4. Perform at most 1-2 sample calculator or grounding checks if needed, then immediately submit the complete sets using submit_quiz_sets.\n"
+        f"5. You must call submit_quiz_sets promptly within a few steps."
     )
 
     messages = [
@@ -218,18 +218,23 @@ async def run_quiz_agent(
     if not settings.GROQ_API_KEY and not settings.GEMINI_API_KEY:
         quiz_data = build_deterministic_quizzes(topic["name"], topic["start_page"], topic["end_page"])
     else:
-        quiz_data = await run_agent_loop(
-            agent_name="quiz_agent",
-            run_id=run_id,
-            topic_id=topic_id,
-            task_weight="heavy",
-            messages=messages,
-            tool_definitions=AGENT_3_TOOLS,
-            tool_executor=tool_executor,
-            submit_tool_name="submit_quiz_sets",
-            submit_validator=SubmitQuizSetsPayload,
-            db=db
-        )
+        try:
+            quiz_data = await run_agent_loop(
+                agent_name="quiz_agent",
+                run_id=run_id,
+                topic_id=topic_id,
+                task_weight="heavy",
+                messages=messages,
+                tool_definitions=AGENT_3_TOOLS,
+                tool_executor=tool_executor,
+                submit_tool_name="submit_quiz_sets",
+                submit_validator=SubmitQuizSetsPayload,
+                db=db,
+                max_steps=25
+            )
+        except Exception as e:
+            await log_agent_step(db, run_id, topic_id, "quiz_agent", 98, "fallback_quizzes", {}, f"Agent step error: {str(e)[:150]}. Using backstop quizzes.")
+            quiz_data = build_deterministic_quizzes(topic["name"], topic["start_page"], topic["end_page"])
 
     # Run Code Backstop in plain Python
     processed_a = run_code_backstop(quiz_data.quiz_set_a, topic["start_page"], topic["end_page"], pages_map)

@@ -30,6 +30,15 @@ async def signup(req: ParentSignupRequest):
             INSERT INTO profiles (id, name, email, password_hash, consent_given)
             VALUES (?, ?, ?, ?, 1)
         """, (user_id, req.name, req.email.lower(), pwd_hash))
+
+        # Auto-create child profile for new parent
+        child_id = str(uuid.uuid4())
+        default_child_name = f"{req.name.split()[0]}'s Learner" if req.name else "Learner"
+        await db.execute("""
+            INSERT INTO children (id, parent_id, name, age, grade, mascot_name, total_stars)
+            VALUES (?, ?, ?, 9, 4, 'Luna the Owl', 0)
+        """, (child_id, user_id, default_child_name))
+
         await db.commit()
 
         cursor = await db.execute("SELECT * FROM profiles WHERE id = ?", (user_id,))

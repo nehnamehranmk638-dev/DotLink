@@ -12,7 +12,7 @@ from app.models.schemas import (
     WordNumberPair,
     MiniGameConfig
 )
-from app.agents.loop import run_agent_loop
+from app.agents.loop import run_agent_loop, log_agent_step
 from app.agents.tools import check_reading_level
 
 AGENT_2_TOOLS = [
@@ -258,18 +258,25 @@ async def run_lesson_and_revision_agent(
     if not settings.GROQ_API_KEY and not settings.GEMINI_API_KEY:
         lesson_data = build_deterministic_lesson(topic["name"], topic["subject_tag"], topic["start_page"], topic["end_page"])
     else:
-        lesson_data = await run_agent_loop(
-            agent_name="lesson_revision_agent",
-            run_id=run_id,
-            topic_id=topic_id,
-            task_weight="heavy",
-            messages=messages,
-            tool_definitions=AGENT_2_TOOLS,
-            tool_executor=tool_executor,
-            submit_tool_name="submit_lesson_and_revision",
-            submit_validator=SubmitLessonAndRevisionPayload,
-            db=db
-        )
+        try:
+            lesson_data = await run_agent_loop(
+                agent_name="lesson_revision_agent",
+                run_id=run_id,
+                topic_id=topic_id,
+                task_weight="heavy",
+                messages=messages,
+                tool_definitions=AGENT_2_TOOLS,
+                tool_executor=tool_executor,
+                submit_tool_name="submit_lesson_and_revision",
+                submit_validator=SubmitLessonAndRevisionPayload,
+                db=db
+            )
+        except Exception as e:
+            try:
+                await log_agent_step(db, run_id, topic_id, "lesson_revision_agent", 99, "fallback_lesson", {}, f"LLM error: {str(e)[:150]}. Using deterministic lesson.")
+            except Exception:
+                pass
+            lesson_data = build_deterministic_lesson(topic["name"], topic["subject_tag"], topic["start_page"], topic["end_page"])
 
     # Save lesson bundle to DB
     bundle_id = str(uuid.uuid4())

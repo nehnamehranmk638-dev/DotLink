@@ -10,19 +10,36 @@ from app.services.mastery_gate import evaluate_mastery_submission
 
 router = APIRouter(tags=["play"])
 
-async def get_child_topics_with_lock_state(child_id: str, db) -> List[Dict[str, Any]]:
+async def get_child_topics_with_lock_state(child_id: str, db, parent_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Derives lock and mastery status deterministically:
+    - Strictly filters by parent_id to prevent cross-parent data leak.
+    - Includes both 'approved' and 'needs_review' generated lessons so they can be played.
     - First topic in a textbook is always unlocked.
-    - Subsequent topics in start_page order unlock when the previous topic has a passed quiz_submission.
+    - Subsequent topics in chapter/topic order unlock when the previous topic has a passed quiz_submission.
     """
-    cursor = await db.execute("""
-        SELECT t.*, tb.title as textbook_title, tb.grade, tb.parent_id
-        FROM topics t
-        JOIN textbooks tb ON t.textbook_id = tb.id
-        WHERE t.status = 'approved'
-        ORDER BY t.textbook_id ASC, t.start_page ASC
-    """)
+    if not parent_id:
+        c_cur = await db.execute("SELECT parent_id FROM children WHERE id = ?", (child_id,))
+        c_row = await c_cur.fetchone()
+        if c_row:
+            parent_id = c_row["parent_id"]
+
+    if parent_id:
+        cursor = await db.execute("""
+            SELECT t.*, tb.title as textbook_title, tb.grade, tb.parent_id
+            FROM topics t
+            JOIN textbooks tb ON t.textbook_id = tb.id
+            WHERE tb.parent_id = ? AND t.status IN ('approved', 'needs_review')
+            ORDER BY t.textbook_id ASC, t.chapter_number ASC, t.topic_number ASC, t.start_page ASC
+        """, (parent_id,))
+    else:
+        cursor = await db.execute("""
+            SELECT t.*, tb.title as textbook_title, tb.grade, tb.parent_id
+            FROM topics t
+            JOIN textbooks tb ON t.textbook_id = tb.id
+            WHERE t.status IN ('approved', 'needs_review')
+            ORDER BY t.textbook_id ASC, t.chapter_number ASC, t.topic_number ASC, t.start_page ASC
+        """)
     all_topics = await cursor.fetchall()
 
     passed_cursor = await db.execute("""
@@ -56,12 +73,22 @@ async def get_child_topics_with_lock_state(child_id: str, db) -> List[Dict[str, 
             """, (child_id, top["id"]))
             active_sess = await sess_cursor.fetchone()
 
+            ch_num = top["chapter_number"] if "chapter_number" in top.keys() and top["chapter_number"] else 1
+            ch_title = top["chapter_title"] if "chapter_title" in top.keys() and top["chapter_title"] else (top.get("chapter_name") or f"Chapter {ch_num}")
+            top_num = top["topic_number"] if "topic_number" in top.keys() and top["topic_number"] else (idx + 1)
+            desc = top["description"] if "description" in top.keys() else None
+
             result.append({
                 "id": top["id"],
                 "textbook_id": top["textbook_id"],
                 "textbook_title": top["textbook_title"],
                 "chapter_name": top["chapter_name"],
+                "chapter_number": ch_num,
+                "chapter_title": ch_title,
+                "topic_number": top_num,
                 "name": top["name"],
+                "description": desc,
+                "status": top["status"],
                 "subject_tag": top["subject_tag"],
                 "start_page": top["start_page"],
                 "end_page": top["end_page"],
@@ -78,11 +105,11 @@ async def get_child_topics_with_lock_state(child_id: str, db) -> List[Dict[str, 
 
 @router.get("/play/topics/{child_id}")
 async def get_play_topics(child_id: str, parent: dict = Depends(get_current_parent)):
-    """Fetches all approved topics for a child with calculated lock and mastery status."""
+    """Fetches all approved/ready topics for a child with calculated lock and mastery status."""
     db = await get_db()
     try:
         child = await verify_child_ownership(child_id, parent["id"], db)
-        topics = await get_child_topics_with_lock_state(child_id, db)
+        topics = await get_child_topics_with_lock_state(child_id, db, parent_id=parent["id"])
         return {
             "child": child,
             "topics": topics
@@ -103,12 +130,22 @@ async def start_or_resume_session(
     try:
         await verify_child_ownership(req.child_id, parent["id"], db)
 
-        cursor = await db.execute("SELECT * FROM topics WHERE id = ?", (req.topic_id,))
+        cursor = await db.execute("""
+            SELECT t.*, tb.parent_id
+            FROM topics t
+            JOIN textbooks tb ON t.textbook_id = tb.id
+            WHERE t.id = ?
+        """, (req.topic_id,))
         topic = await cursor.fetchone()
-        if not topic or topic["status"] != "approved":
+        if not topic or topic["parent_id"] != parent["id"]:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Topic not found or does not belong to parent."
+            )
+        if topic["status"] not in ("approved", "needs_review"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Topic is not approved for learning."
+                detail="Topic is not ready for learning."
             )
 
         cursor = await db.execute("SELECT * FROM lesson_bundles WHERE topic_id = ?", (req.topic_id,))

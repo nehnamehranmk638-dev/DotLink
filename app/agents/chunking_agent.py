@@ -8,7 +8,7 @@ from app.models.schemas import (
     ChapterChunk,
     SubTopicChunk
 )
-from app.agents.loop import run_agent_loop
+from app.agents.loop import run_agent_loop, log_agent_step
 
 CHUNKING_AGENT_TOOLS = [
     {
@@ -189,23 +189,22 @@ async def run_textbook_chunking_agent(
         {"role": "user", "content": initial_user_msg}
     ]
 
-    # Offline / Heuristic fallback if LLM is unavailable
-    if not settings.GROQ_API_KEY and not settings.GEMINI_API_KEY:
-        if page_count <= 4:
-            mid = max(1, page_count // 2)
-            hierarchy_result = CurriculumHierarchySubmission(
-                subject_tag=subject_tag,
+    def build_heuristic_hierarchy(pc: int, title: str, tag: str) -> CurriculumHierarchySubmission:
+        if pc <= 4:
+            mid = max(1, pc // 2)
+            return CurriculumHierarchySubmission(
+                subject_tag=tag,
                 chapters=[
                     ChapterChunk(
                         chapter_number=1,
-                        chapter_title=textbook_title,
+                        chapter_title=title,
                         start_page=1,
-                        end_page=page_count,
+                        end_page=pc,
                         topics=[
                             SubTopicChunk(
                                 topic_number=1,
-                                name=f"Introduction to {subject_tag}",
-                                summary=f"Foundational concepts and examples in {subject_tag}.",
+                                name=f"Introduction to {tag}",
+                                summary=f"Foundational concepts and examples in {tag}.",
                                 start_page=1,
                                 end_page=mid
                             ),
@@ -213,23 +212,23 @@ async def run_textbook_chunking_agent(
                                 topic_number=2,
                                 name=f"Core Applications & Exercises",
                                 summary=f"Practice problems and key takeaways.",
-                                start_page=mid + 1 if page_count > 1 else 1,
-                                end_page=page_count
+                                start_page=mid + 1 if pc > 1 else 1,
+                                end_page=pc
                             )
                         ]
                     )
                 ]
             )
         else:
-            mid_book = page_count // 2
+            mid_book = pc // 2
             mid_c1 = max(1, mid_book // 2)
-            mid_c2 = mid_book + max(1, (page_count - mid_book) // 2)
-            hierarchy_result = CurriculumHierarchySubmission(
-                subject_tag=subject_tag,
+            mid_c2 = mid_book + max(1, (pc - mid_book) // 2)
+            return CurriculumHierarchySubmission(
+                subject_tag=tag,
                 chapters=[
                     ChapterChunk(
                         chapter_number=1,
-                        chapter_title=f"{textbook_title}: Part I",
+                        chapter_title=f"{title}: Part I",
                         start_page=1,
                         end_page=mid_book,
                         topics=[
@@ -251,9 +250,9 @@ async def run_textbook_chunking_agent(
                     ),
                     ChapterChunk(
                         chapter_number=2,
-                        chapter_title=f"{textbook_title}: Part II",
+                        chapter_title=f"{title}: Part II",
                         start_page=mid_book + 1,
-                        end_page=page_count,
+                        end_page=pc,
                         topics=[
                             SubTopicChunk(
                                 topic_number=1,
@@ -267,25 +266,36 @@ async def run_textbook_chunking_agent(
                                 name="Mastery & Synthesis",
                                 summary="Comprehensive review, word problems, and summary questions.",
                                 start_page=mid_c2 + 1,
-                                end_page=page_count
+                                end_page=pc
                             )
                         ]
                     )
                 ]
             )
+
+    # Offline / Heuristic fallback if LLM is unavailable
+    if not settings.GROQ_API_KEY and not settings.GEMINI_API_KEY:
+        hierarchy_result = build_heuristic_hierarchy(page_count, textbook_title, subject_tag)
     else:
-        hierarchy_result = await run_agent_loop(
-            agent_name="chunking_agent",
-            run_id=run_id,
-            topic_id=None,
-            task_weight="light",
-            messages=messages,
-            tool_definitions=CHUNKING_AGENT_TOOLS,
-            tool_executor=tool_executor,
-            submit_tool_name="submit_curriculum_hierarchy",
-            submit_validator=CurriculumHierarchySubmission,
-            db=db
-        )
+        try:
+            hierarchy_result = await run_agent_loop(
+                agent_name="chunking_agent",
+                run_id=run_id,
+                topic_id=None,
+                task_weight="light",
+                messages=messages,
+                tool_definitions=CHUNKING_AGENT_TOOLS,
+                tool_executor=tool_executor,
+                submit_tool_name="submit_curriculum_hierarchy",
+                submit_validator=CurriculumHierarchySubmission,
+                db=db
+            )
+        except Exception as e:
+            try:
+                await log_agent_step(db, run_id, None, "chunking_agent", 99, "fallback_chunker", {}, f"LLM connection error: {str(e)[:150]}. Using deterministic chunker.")
+            except Exception:
+                pass
+            hierarchy_result = build_heuristic_hierarchy(page_count, textbook_title, subject_tag)
 
     # Persist topics hierarchically to topics table with status 'chunked'
     created_topics = []

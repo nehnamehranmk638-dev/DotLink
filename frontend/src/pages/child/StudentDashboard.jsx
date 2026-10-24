@@ -18,13 +18,33 @@ export default function StudentDashboard() {
   const loadStudentData = async () => {
     setLoading(true);
     try {
-      const kids = await api.getChildren();
-      setChildren(kids);
+      let kids = await api.getChildren();
+      if (!kids || kids.length === 0) {
+        try {
+          const newKid = await api.createChild({
+            name: 'Learner',
+            age: 9,
+            grade: 4,
+            mascot_name: 'Luna the Owl'
+          });
+          kids = [newKid];
+        } catch (e) {
+          console.error('Could not auto-create child:', e);
+        }
+      }
+      setChildren(kids || []);
       let currentKid = activeChild;
-      if (!currentKid && kids.length > 0) {
+      if (!currentKid && kids && kids.length > 0) {
         currentKid = kids[0];
         api.setActiveChild(kids[0]);
         setActiveChild(kids[0]);
+      } else if (currentKid && kids && kids.length > 0) {
+        const found = kids.find((k) => k.id === currentKid.id);
+        if (!found) {
+          currentKid = kids[0];
+          api.setActiveChild(kids[0]);
+          setActiveChild(kids[0]);
+        }
       }
 
       if (currentKid) {
@@ -56,7 +76,12 @@ export default function StudentDashboard() {
     if (!topic.is_unlocked) return;
     setStartingTopicId(topic.id);
     try {
-      const sess = await api.startOrResumeSession(activeChild.id, topic.id);
+      const kidId = activeChild?.id || (children[0] ? children[0].id : null);
+      if (!kidId) {
+        alert('Please select or create a child profile first.');
+        return;
+      }
+      const sess = await api.startOrResumeSession(kidId, topic.id);
       navigate(`/play/session/${sess.session_id}`);
     } catch (err) {
       alert(err.message || 'Could not start session');
@@ -76,10 +101,11 @@ export default function StudentDashboard() {
     };
   }
 
-  const subjects = ['ALL', 'Maths', 'Science', 'English'];
+  const uniqueSubjects = Array.from(new Set(topics.map((t) => t.subject_tag).filter(Boolean)));
+  const subjects = ['ALL', ...uniqueSubjects];
   const filteredTopics = selectedSubject === 'ALL'
     ? topics
-    : topics.filter((t) => t.subject_tag.toLowerCase() === selectedSubject.toLowerCase());
+    : topics.filter((t) => (t.subject_tag || '').toLowerCase() === selectedSubject.toLowerCase());
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '32px 24px' }}>
@@ -112,9 +138,9 @@ export default function StudentDashboard() {
               boxShadow: '0 8px 24px rgba(236, 72, 153, 0.4)'
             }}
           >
-            {activeChild?.mascot_name.includes('Lion') ? '🦁' :
-             activeChild?.mascot_name.includes('Owl') ? '🦉' :
-             activeChild?.mascot_name.includes('Fox') ? '🦊' : '🐧'}
+            {activeChild?.mascot_name?.includes('Lion') ? '🦁' :
+             activeChild?.mascot_name?.includes('Owl') ? '🦉' :
+             activeChild?.mascot_name?.includes('Fox') ? '🦊' : '🐧'}
           </div>
 
           <div>
@@ -174,7 +200,7 @@ export default function StudentDashboard() {
       </div>
 
       {/* Subject Filter Tags */}
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '28px', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: '12px', marginBottom: '28px', alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: '600' }}>Filter Subjects:</span>
         {subjects.map((sub) => (
           <button
@@ -196,9 +222,9 @@ export default function StudentDashboard() {
       ) : filteredTopics.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', padding: '60px 24px' }}>
           <div style={{ fontSize: '3rem', marginBottom: '16px' }}>📖</div>
-          <h2 style={{ fontSize: '1.4rem', marginBottom: '8px' }}>No Approved Lessons Available Yet</h2>
+          <h2 style={{ fontSize: '1.4rem', marginBottom: '8px' }}>No Generated Lessons Available Yet</h2>
           <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '0 auto 24px auto' }}>
-            Ask your parent to fetch an NCERT chapter and approve the generated lesson from the Parent Curriculum tab!
+            Generate interactive lessons & quizzes in your Parent Curriculum tab to start learning here!
           </p>
           <button className="btn btn-primary" onClick={() => navigate('/curriculum')}>
             Switch to Parent Setup →
@@ -210,6 +236,7 @@ export default function StudentDashboard() {
             const isLocked = !topic.is_unlocked;
             const isMastered = topic.is_mastered;
             const isResuming = topic.has_active_session && topic.last_scene_index > 0;
+            const cleanSub = (topic.subject_tag || 'maths').toLowerCase().replace(/\s+/g, '_');
 
             return (
               <div
@@ -229,8 +256,8 @@ export default function StudentDashboard() {
                 }}
               >
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                    <span className={`badge badge-${topic.subject_tag.toLowerCase()}`}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <span className={`badge badge-${cleanSub}`}>
                       {topic.subject_tag}
                     </span>
                     {isMastered ? (
@@ -248,19 +275,29 @@ export default function StudentDashboard() {
                     )}
                   </div>
 
-                  <h3 style={{ fontSize: '1.3rem', marginBottom: '8px' }}>{topic.name}</h3>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.875rem', marginBottom: '14px' }}>
-                    {topic.textbook_title} · Chapter: {topic.chapter_name}
-                  </p>
-                  <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginBottom: '20px' }}>
-                    Pages {topic.start_page} to {topic.end_page}
+                  <div style={{ fontSize: '0.82rem', color: 'var(--color-primary-light)', fontWeight: '700', marginBottom: '6px', letterSpacing: '0.03em' }}>
+                    {topic.chapter_title ? `Chapter ${topic.chapter_number || 1}: ${topic.chapter_title}` : (topic.chapter_name || topic.textbook_title)}
+                  </div>
+
+                  <h3 style={{ fontSize: '1.25rem', marginBottom: '8px', lineHeight: '1.3' }}>
+                    {topic.chapter_number && topic.topic_number ? `Topic ${topic.chapter_number}.${topic.topic_number}: ` : ''}{topic.name}
+                  </h3>
+
+                  {topic.description && (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem', marginBottom: '12px', lineHeight: '1.4' }}>
+                      {topic.description}
+                    </p>
+                  )}
+
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginBottom: '18px' }}>
+                    {topic.textbook_title} · Pages {topic.start_page} to {topic.end_page}
                   </p>
                 </div>
 
                 <div>
                   {isLocked ? (
                     <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '12px', borderRadius: 'var(--radius-sm)', textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-dim)' }}>
-                      🔒 Pass the 7/10 quiz in Topic {idx} to unlock this lesson
+                      🔒 Pass the 7/10 quiz in previous topic to unlock this lesson
                     </div>
                   ) : (
                     <button

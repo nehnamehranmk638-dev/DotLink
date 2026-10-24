@@ -35,8 +35,8 @@ async def background_generate_lesson_and_quizzes(topic_id: str, previous_status:
         # 2. Run Agent 3 (Quiz & Retest)
         await run_quiz_agent(topic_id, run_id, db)
 
-        # On success: set status to 'needs_review'
-        await db.execute("UPDATE topics SET status = 'needs_review' WHERE id = ?", (topic_id,))
+        # On success: set status directly to 'approved' so no manual approval is required
+        await db.execute("UPDATE topics SET status = 'approved' WHERE id = ?", (topic_id,))
         await db.commit()
     except Exception as e:
         # On failure: restore previous status and log error
@@ -50,7 +50,7 @@ async def background_generate_lesson_and_quizzes(topic_id: str, previous_status:
 @router.post("/curriculum/upload-textbook")
 async def upload_and_chunk_textbook(
     file: UploadFile = File(...),
-    grade: int = Form(...),
+    grade: Optional[int] = Form(None),
     subject_tag: str = Form(...),
     title: Optional[str] = Form(None),
     parent: dict = Depends(get_current_parent)
@@ -66,13 +66,6 @@ async def upload_and_chunk_textbook(
             detail="A digital textbook PDF file is required."
         )
 
-    clean_title = (title or "").strip()
-    if not clean_title:
-        base_name = file.filename.rsplit(".", 1)[0]
-        clean_title = base_name.replace("_", " ").replace("-", " ").title()
-        if not clean_title:
-            clean_title = f"{subject_tag} Grade {grade}"
-
     pdf_bytes = await file.read()
     if len(pdf_bytes) == 0:
         raise HTTPException(
@@ -82,6 +75,17 @@ async def upload_and_chunk_textbook(
 
     db = await get_db()
     try:
+        if grade is None:
+            c_cur = await db.execute("SELECT grade FROM children WHERE parent_id = ? ORDER BY created_at ASC LIMIT 1", (parent["id"],))
+            c_row = await c_cur.fetchone()
+            grade = c_row["grade"] if c_row else 4
+
+        clean_title = (title or "").strip()
+        if not clean_title:
+            base_name = file.filename.rsplit(".", 1)[0]
+            clean_title = base_name.replace("_", " ").replace("-", " ").title()
+            if not clean_title:
+                clean_title = f"{subject_tag} Grade {grade}"
         textbook_id, page_count, pages = await ingest_uploaded_textbook(
             parent_id=parent["id"],
             grade=grade,

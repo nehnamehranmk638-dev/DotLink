@@ -29,7 +29,7 @@ class Settings:
     GEMINI_FALLBACK_MODEL: str = "gemini-2.0-flash"
 
     # Agent Tunables
-    AGENT_MAX_STEPS: int = 12
+    AGENT_MAX_STEPS: int = 25
     AGENT_MAX_RETRIES: int = 2
     GROUNDING_FUZZY_THRESHOLD: float = 65.0  # RapidFuzz match ratio (0-100)
 
