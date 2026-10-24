@@ -1,4 +1,8 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+let rawApiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+if (rawApiBase && !rawApiBase.startsWith('http://') && !rawApiBase.startsWith('https://')) {
+  rawApiBase = `https://${rawApiBase}`;
+}
+const API_BASE = rawApiBase.replace(/\/+$/, '');
 
 function getAuthHeader() {
   const token = localStorage.getItem('dotlink_token');
