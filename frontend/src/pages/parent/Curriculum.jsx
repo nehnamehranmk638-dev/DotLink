@@ -1011,20 +1011,25 @@ export default function Curriculum() {
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
                       <span style={{ fontWeight: 800, color: '#4a315d' }}>
-                        Step {log.step_number}: {log.agent_name}
+                        Step {log.step_num || log.step_number || index + 1}: {log.agent_name}
                       </span>
                       <span style={{ color: '#64748b', fontSize: '11px' }}>
-                        {new Date(log.created_at).toLocaleTimeString()}
+                        {log.created_at ? new Date(log.created_at).toLocaleTimeString() : ''}
                       </span>
                     </div>
                     <div style={{ color: '#0369a1', fontWeight: 700, fontSize: '12px', marginBottom: '4px' }}>
-                      Tool: {log.tool_name}
+                      Tool: <code>{log.tool_name}</code>
                     </div>
+                    {log.args_json && Object.keys(log.args_json).length > 0 && (
+                      <div style={{ color: '#6b7280', fontSize: '11px', marginBottom: '4px', fontStyle: 'italic' }}>
+                        Args: {typeof log.args_json === 'string' ? log.args_json : JSON.stringify(log.args_json)}
+                      </div>
+                    )}
                     {log.error ? (
                       <div style={{ color: '#b91c1c', fontWeight: 600 }}>Error: {log.error}</div>
                     ) : (
-                      <div style={{ color: '#334155', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '12px' }}>
-                        {log.output_summary}
+                      <div style={{ color: '#334155', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '12px', backgroundColor: '#f1f5f9', padding: '6px 8px', borderRadius: '6px' }}>
+                        {log.result_summary || log.output_summary || 'Execution completed successfully.'}
                       </div>
                     )}
                   </div>

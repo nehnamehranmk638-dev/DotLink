@@ -255,18 +255,33 @@ async def get_agent_steps(id: str, parent: dict = Depends(get_current_parent)):
             SELECT * FROM agent_steps WHERE topic_id = ? ORDER BY created_at ASC, step_num ASC
         """, (id,))
         rows = await cursor.fetchall()
+
+        if not rows:
+            # Check if there are textbook-level chunking steps associated with other topics of the same textbook
+            top_cur = await db.execute("SELECT textbook_id FROM topics WHERE id = ?", (id,))
+            top_row = await top_cur.fetchone()
+            if top_row:
+                tb_id = top_row["textbook_id"]
+                cursor = await db.execute("""
+                    SELECT s.* FROM agent_steps s
+                    JOIN topics t ON s.topic_id = t.id
+                    WHERE t.textbook_id = ?
+                    ORDER BY s.created_at ASC, s.step_num ASC
+                """, (tb_id,))
+                rows = await cursor.fetchall()
+
         result = []
         for r in rows:
             args_val = json.loads(r["args_json"]) if isinstance(r["args_json"], str) else r["args_json"]
             result.append(AgentStepOut(
                 id=r["id"],
                 run_id=r["run_id"],
-                topic_id=r["topic_id"],
+                topic_id=r["topic_id"] or id,
                 agent_name=r["agent_name"],
                 step_num=r["step_num"],
                 tool_name=r["tool_name"],
                 args_json=args_val or {},
-                result_summary=r["result_summary"],
+                result_summary=r["result_summary"] or "",
                 created_at=str(r["created_at"])
             ))
         return result
