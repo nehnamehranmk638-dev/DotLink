@@ -1,4 +1,5 @@
-let rawApiBase = import.meta.env.VITE_API_URL || 'https://dotlink-backend.onrender.com';
+let defaultBase = import.meta.env.DEV ? 'http://localhost:8000' : 'https://dotlink-backend.onrender.com';
+let rawApiBase = import.meta.env.VITE_API_URL || defaultBase;
 if (rawApiBase && !rawApiBase.startsWith('http://') && !rawApiBase.startsWith('https://')) {
   rawApiBase = `https://${rawApiBase}`;
 }
