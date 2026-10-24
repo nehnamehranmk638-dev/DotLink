@@ -26,7 +26,7 @@ class Settings:
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GROQ_HEAVY_MODEL: str = "openai/gpt-oss-120b"
     GROQ_LIGHT_MODEL: str = "openai/gpt-oss-20b"
-    GEMINI_FALLBACK_MODEL: str = "gemini-2.0-flash"
+    GEMINI_FALLBACK_MODEL: str = "gemini-3.8-flash"
 
     # Agent Tunables
     AGENT_MAX_STEPS: int = 25

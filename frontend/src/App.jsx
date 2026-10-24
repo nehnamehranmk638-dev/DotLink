@@ -1,13 +1,18 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
+import Landing from './pages/Landing';
 import Login from './pages/parent/Login';
-import Dashboard from './pages/parent/Dashboard';
+import ParentHub from './pages/parent/ParentHub';
+import WeeklyStudentDashboard from './pages/parent/WeeklyStudentDashboard';
+import KidsSpaceEntry from './pages/parent/KidsSpaceEntry';
 import Curriculum from './pages/parent/Curriculum';
 import CurriculumReview from './pages/parent/CurriculumReview';
+import ChapterPicker from './pages/child/ChapterPicker';
 import StudentDashboard from './pages/child/StudentDashboard';
 import AnimatedLessonPlayer from './pages/child/AnimatedLessonPlayer';
 import QuizView from './pages/child/QuizView';
+import RemediationDev from './pages/dev/RemediationDev';
 import { api } from './api';
 
 function ProtectedRoute({ children }) {
@@ -18,20 +23,60 @@ function ProtectedRoute({ children }) {
   return children;
 }
 
-export default function App() {
+function NavigationWrapper() {
+  const location = useLocation();
+  // Hide default navbar on full-screen custom pages (Landing, Choose Chapter, Kids Entry, Parent Hub, Weekly Dashboard, Login, Signup, Curriculum, Dev Remediation)
+  const hideNavbarOn = ['/', '/chapters', '/kids-entry', '/dashboard', '/analytics', '/login', '/signup', '/curriculum', '/dev/remediation'];
+  const showNav = !hideNavbarOn.includes(location.pathname);
+
   return (
-    <BrowserRouter>
-      <Navbar />
+    <>
+      {showNav && <Navbar />}
       <Routes>
-        <Route path="/login" element={<Login />} />
+        {/* Splash Landing Screen with Cute Crab Pull Animation */}
+        <Route path="/" element={<Landing />} />
+
+        {/* Parent Hub */}
         <Route
           path="/dashboard"
           element={
             <ProtectedRoute>
-              <Dashboard />
+              <ParentHub />
             </ProtectedRoute>
           }
         />
+
+        {/* Weekly Student Dashboard with Attentivity, Accuracy & Subject Charts */}
+        <Route
+          path="/analytics"
+          element={
+            <ProtectedRoute>
+              <WeeklyStudentDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Choose a Chapter with CSS Notebooks & Animated Progress Timeline */}
+        <Route
+          path="/chapters"
+          element={
+            <ProtectedRoute>
+              <ChapterPicker />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Kids Space Entry with Real Scannable QR Code */}
+        <Route
+          path="/kids-entry"
+          element={
+            <ProtectedRoute>
+              <KidsSpaceEntry />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Curriculum Upload & Ingestion */}
         <Route
           path="/curriculum"
           element={
@@ -40,6 +85,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/review/:topicId"
           element={
@@ -48,6 +94,8 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
+        {/* Child Play Study Space */}
         <Route
           path="/play"
           element={
@@ -56,6 +104,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/play/session/:sessionId"
           element={
@@ -64,6 +113,7 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
         <Route
           path="/play/quiz/:sessionId"
           element={
@@ -72,8 +122,20 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Login initialSignUp={true} />} />
+        <Route path="/dev/remediation" element={<RemediationDev />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <NavigationWrapper />
     </BrowserRouter>
   );
 }

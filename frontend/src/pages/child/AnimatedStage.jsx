@@ -44,15 +44,15 @@ export default function AnimatedStage({
   useEffect(() => {
     sound.playChime();
 
-    // 1. Enter animation for visual stage elements
+    // 1. Snappy enter animation for visual stage elements
     if (stageRef.current) {
       animate('.stage-card-bounce', {
-        scale: [0.65, 1.04, 1],
+        scale: [0.8, 1.03, 1],
         opacity: [0, 1],
-        translateY: [28, 0],
-        delay: stagger(100),
-        duration: 750,
-        ease: 'outElastic(1, .6)'
+        translateY: [16, 0],
+        delay: stagger(50),
+        duration: 420,
+        ease: 'outBack'
       });
 
       animate('.floating-sparkle', {

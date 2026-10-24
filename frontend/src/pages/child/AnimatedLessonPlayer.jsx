@@ -57,6 +57,9 @@ export default function AnimatedLessonPlayer() {
   const lastInteractionRef = useRef(Date.now());
 
   useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.getVoices();
+    }
     initSession();
     return () => {
       if (window.speechSynthesis) {
@@ -68,15 +71,9 @@ export default function AnimatedLessonPlayer() {
   const initSession = async () => {
     try {
       const activeKid = api.getActiveChild();
-      // Fetch session directly or start/resume
-      const token = localStorage.getItem('dotlink_token');
-      const res = await fetch(`http://localhost:8000/sessions/start-or-resume`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ child_id: activeKid.id, topic_id: 'auto' }) // Handled via existing session lookup
-      }).catch(() => null);
+      setActiveChild(activeKid);
 
-      // Fetch session from db via router
+      // Fetch session from db via router directly without redundant pre-call
       const sessData = await fetchSessionData();
       if (!sessData) return;
 

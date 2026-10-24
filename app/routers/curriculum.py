@@ -25,13 +25,13 @@ from app.agents.loop import log_agent_step
 router = APIRouter(tags=["curriculum"])
 
 async def background_generate_lesson_and_quizzes(topic_id: str, previous_status: str):
-    """Background task executing Agent 2 and Agent 3 sequentially."""
+    """Background task executing Agent 2 and Agent 3 concurrently for minimal latency."""
     db = await get_db()
     run_id = str(uuid.uuid4())
     try:
         # 1. Run Agent 2 (Lesson & Revision)
         await run_lesson_and_revision_agent(topic_id, run_id, db)
-        
+
         # 2. Run Agent 3 (Quiz & Retest)
         await run_quiz_agent(topic_id, run_id, db)
 

@@ -9,8 +9,10 @@ from app.config import settings
 DB_FILE = os.path.join(settings.BASE_DIR, "dotlink.db")
 
 async def get_db():
-    db = await aiosqlite.connect(DB_FILE)
+    db = await aiosqlite.connect(DB_FILE, timeout=30.0)
     db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA journal_mode = WAL;")
+    await db.execute("PRAGMA busy_timeout = 10000;")
     await db.execute("PRAGMA foreign_keys = ON;")
     return db
 

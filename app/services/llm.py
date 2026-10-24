@@ -9,8 +9,7 @@ from app.config import settings
 class LLMService:
     def __init__(self):
         self.groq_api_key = settings.GROQ_API_KEY
-        # Only enable Gemini fallback if key is a valid Google AI Studio key format
-        self.gemini_api_key = settings.GEMINI_API_KEY if settings.GEMINI_API_KEY.startswith("AIzaSy") else ""
+        self.gemini_api_key = settings.GEMINI_API_KEY or ""
 
     async def call_groq(
         self,
@@ -34,11 +33,11 @@ class LLMService:
             payload["tools"] = tools
             payload["tool_choice"] = tool_choice
 
-        # Exponential backoff respecting retry-after headers
-        delays = [2, 5, 8, 12, 16]
+        # Low-latency backoff: fail fast if rate-limited or sluggish
+        delays = [1, 2]
         for idx, delay in enumerate(delays):
             try:
-                async with httpx.AsyncClient(timeout=90.0) as client:
+                async with httpx.AsyncClient(timeout=25.0) as client:
                     resp = await client.post(url, headers=headers, json=payload)
                     if resp.status_code == 429:
                         retry_after_hdr = resp.headers.get("retry-after")
@@ -46,7 +45,10 @@ class LLMService:
                             wait_time = float(retry_after_hdr) if retry_after_hdr else delay
                         except (ValueError, TypeError):
                             wait_time = delay
-                        await asyncio.sleep(max(wait_time, delay))
+                        # Never block more than 2.5 seconds on rate limits; fail fast to fallback
+                        if wait_time > 2.5:
+                            raise RuntimeError(f"Groq rate-limited (retry-after: {wait_time}s). Fast failing to fallback.")
+                        await asyncio.sleep(wait_time)
                         continue
                     resp.raise_for_status()
                     data = resp.json()
@@ -133,7 +135,7 @@ class LLMService:
         if gemini_tools:
             body["tools"] = gemini_tools
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(url, json=body)
             resp.raise_for_status()
             res = resp.json()

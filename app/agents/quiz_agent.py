@@ -198,6 +198,7 @@ async def run_quiz_agent(
             return check_grounding(q_text, pages_map.get(p, ""))
         return {"error": f"Unknown tool {name}"}
 
+    page_snippet = "\n\n".join([f"--- Page {p} ---\n{txt}" for p, txt in sorted(pages_map.items())])
     system_prompt = (
         f"You are Agent 3 (Quiz & Retest Agent). You generate two parallel 10-question multiple-choice quizzes: "
         f"Set A (end-of-lesson quiz) and Set B (post-revision retest) for Topic '{topic['name']}' "
@@ -206,13 +207,12 @@ async def run_quiz_agent(
         f"1. Exactly 10 questions in quiz_set_a, exactly 10 questions in quiz_set_b.\n"
         f"2. No overlapping questions between Set A and Set B.\n"
         f"3. Every question strictly requires question_text, options, correct_answer, hint_text, explanation_text, and source_page.\n"
-        f"4. Perform at most 1-2 sample calculator or grounding checks if needed, then immediately submit the complete sets using submit_quiz_sets.\n"
-        f"5. You must call submit_quiz_sets promptly within a few steps."
+        f"Directly generate and call 'submit_quiz_sets' with both complete 10-question sets."
     )
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Please generate Quiz Set A and Quiz Set B for topic '{topic['name']}'."}
+        {"role": "user", "content": f"Topic: '{topic['name']}'.\nSource Text:\n{page_snippet[:3500]}\n\nPlease generate Quiz Set A and Quiz Set B and immediately call submit_quiz_sets."}
     ]
 
     if not settings.GROQ_API_KEY and not settings.GEMINI_API_KEY:

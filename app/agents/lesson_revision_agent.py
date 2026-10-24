@@ -237,6 +237,7 @@ async def run_lesson_and_revision_agent(
             return check_reading_level(text, g)
         return {"error": f"Unknown tool {name}"}
 
+    page_snippet = "\n\n".join([f"--- Page {p} ---\n{txt}" for p, txt in sorted(pages_map.items())])
     system_prompt = (
         f"You are Agent 2 (Lesson & Revision Script Agent). You create interactive, child-safe animated lesson scripts "
         f"for Grade {grade} students based strictly on the NCERT textbook source pages.\n"
@@ -247,12 +248,12 @@ async def run_lesson_and_revision_agent(
         f"3. 1 to 3 mid-lesson pop-up in-video questions (scene_num, question_text, 3-4 options, correct_answer, hint_text, explanation_text, source_page).\n"
         f"4. Revision bullets linked to scenes.\n"
         f"5. mini_game_config with 6 to 8 matching word/number pairs.\n"
-        f"Check reading level to ensure age-appropriateness, and call submit_lesson_and_revision when done."
+        f"Immediately call 'submit_lesson_and_revision' with the complete payload."
     )
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Please generate the lesson and revision sheet for topic '{topic['name']}'."}
+        {"role": "user", "content": f"Topic: '{topic['name']}'.\nSource Text:\n{page_snippet[:3500]}\n\nPlease generate the lesson and revision sheet and call submit_lesson_and_revision."}
     ]
 
     if not settings.GROQ_API_KEY and not settings.GEMINI_API_KEY:
