@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { animate, createTimeline } from 'animejs';
+import { createTimeline } from 'animejs';
 import { api } from '../../api';
 
 export default function WeeklyStudentDashboard() {
@@ -38,7 +38,36 @@ export default function WeeklyStudentDashboard() {
     }
   };
 
+  // Pure zero fallback if student has no activity yet
+  const attentivity = analyticsData?.attentivity || {
+    days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+    has_activity: false,
+    peak_day: 'Mon',
+    peak_pct: 0,
+    peak_cx: 250,
+    peak_cy: 170,
+    svg_path: 'M30,170 L103,170 L176,170 L250,170 L323,170 L396,170 L470,170'
+  };
+
+  const rawAccuracy = analyticsData?.accuracy;
+  const accuracy = rawAccuracy && (rawAccuracy.correct_count + rawAccuracy.wrong_count > 0)
+    ? rawAccuracy
+    : {
+        percentage: 0,
+        correct_count: 0,
+        wrong_count: 0,
+        stroke_dashoffset: 628.31
+      };
+
+  const analysisText = analyticsData?.analysis_text ||
+    `${activeChild?.name || 'Your student'} hasn't completed any learning activities yet this week. Start a lesson to track focus and accuracy stats!`;
+
   const runChartAnimations = (snap) => {
+    const activeAcc = snap?.accuracy;
+    const targetOffset = activeAcc && (activeAcc.correct_count + activeAcc.wrong_count > 0) && activeAcc.percentage > 0
+      ? (activeAcc.stroke_dashoffset || 628.31)
+      : 628.31;
+
     const tl = createTimeline({ ease: 'outExpo' });
 
     // 1. Line Chart Stroke & Peak
@@ -62,7 +91,7 @@ export default function WeeklyStudentDashboard() {
 
     // 2. Accuracy Donut Circle
     .add('.segment-correct', {
-      strokeDashoffset: [628.31, snap?.accuracy?.stroke_dashoffset || 94.24],
+      strokeDashoffset: [628.31, targetOffset],
       duration: 1400,
       ease: 'inOutCubic'
     }, '-=800')
@@ -70,54 +99,8 @@ export default function WeeklyStudentDashboard() {
       opacity: [0, 1],
       scale: [0.8, 1],
       duration: 700
-    }, '-=1000')
-
-    // 3. Bars
-    .add('.bar-element', {
-      height: (el) => el.getAttribute('data-height') || '40%',
-      duration: 900,
-      delay: (el, i) => i * 80
-    }, '-=800')
-    .add('.bar-value', {
-      opacity: [0, 1],
-      translateY: [6, 0],
-      duration: 500,
-      delay: (el, i) => i * 80
-    }, '-=600');
+    }, '-=1000');
   };
-
-  // Fallback data if student has no activity yet
-  const attentivity = analyticsData?.attentivity || {
-    days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
-    peak_day: 'Wed',
-    peak_pct: 88,
-    peak_cx: 250,
-    peak_cy: 30,
-    svg_path: 'M30,140 C 90,160 150,60 210,90 C 250,30 320,130 390,70 C 430,90 470,60 490,60'
-  };
-
-  const accuracy = analyticsData?.accuracy || {
-    percentage: 85,
-    correct_count: 340,
-    wrong_count: 60,
-    stroke_dashoffset: 94.24
-  };
-
-  const daysBySubject = analyticsData?.days_by_subject || [
-    { subject: 'Math', days: 2.5, percent: 50, color: '#116a4e' },
-    { subject: 'Sci', days: 4.0, percent: 80, color: '#14b02b' },
-    { subject: 'Eng', days: 2.0, percent: 40, color: '#75c96b' },
-    { subject: 'Hist', days: 4.5, percent: 90, color: '#f7385f' },
-    { subject: 'Art', days: 1.5, percent: 30, color: '#ff85a1' },
-    { subject: 'P.E.', days: 3.5, percent: 70, color: '#4267f5' },
-    { subject: 'Music', days: 1.0, percent: 20, color: '#9b51e0' }
-  ];
-
-  const highlights = analyticsData?.subject_highlights || [
-    { subject: 'History', text: 'Longest duration spent reviewing', days: '4.5 Days', color: '#f7385f' },
-    { subject: 'Science', text: 'Consistent daily modules', days: '4.0 Days', color: '#14b02b' },
-    { subject: 'Music', text: 'Short practice sessions', days: '1.0 Days', color: '#9b51e0' }
-  ];
 
   return (
     <div style={{
@@ -128,7 +111,7 @@ export default function WeeklyStudentDashboard() {
       color: '#3b2a49'
     }}>
       {/* Top Bar */}
-      <div style={{ maxWidth: '750px', margin: '0 auto 24px auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ maxWidth: '750px', margin: '0 auto 24px auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
         <button
           onClick={() => navigate('/dashboard')}
           style={{
@@ -165,8 +148,7 @@ export default function WeeklyStudentDashboard() {
             Weekly Learner Snapshot
           </h1>
           <p style={{ fontSize: '16px', fontWeight: 500, opacity: 0.85, margin: 0, lineHeight: 1.5 }}>
-            {analyticsData?.analysis_text ||
-              `${activeChild?.name || 'Your student'} maintained consistent focus throughout the week, peaking mid-week. They achieved a solid ${accuracy.percentage}% weekly accuracy rate.`}
+            {analysisText}
           </p>
         </div>
 
@@ -249,7 +231,9 @@ export default function WeeklyStudentDashboard() {
                     opacity: 0
                   }}
                 >
-                  Focus Peak ({attentivity.peak_day}: {attentivity.peak_pct}%)
+                  {attentivity.has_activity
+                    ? `Focus Peak (${attentivity.peak_day}: ${attentivity.peak_pct}%)`
+                    : 'No Activity Yet (0%)'}
                 </div>
               </div>
             </div>
@@ -327,118 +311,6 @@ export default function WeeklyStudentDashboard() {
               <span style={{ display: 'inline-block', width: '14px', height: '14px', borderRadius: '50%', backgroundColor: '#ff9fb8', marginRight: '6px' }} />
               Wrong ({accuracy.wrong_count} Qs)
             </div>
-          </div>
-        </div>
-
-        {/* Graph 3: Days Spent per Subject */}
-        <div style={{
-          background: 'white',
-          borderRadius: '24px',
-          padding: '30px',
-          border: '6px solid #cca9ef',
-          boxShadow: '0 10px 20px rgba(0, 0, 0, 0.08)'
-        }}>
-          <h2 style={{ fontSize: '20px', marginTop: 0, marginBottom: '25px', fontWeight: 700, textAlign: 'center' }}>
-            Days Spent by Subject
-          </h2>
-
-          <div style={{
-            position: 'relative',
-            height: '320px',
-            backgroundColor: '#fcfbf7',
-            padding: '20px 20px 40px 45px',
-            borderRadius: '12px'
-          }}>
-            {/* Chart Grid Lines */}
-            <div style={{
-              position: 'absolute',
-              top: '20px',
-              left: '55px',
-              right: '20px',
-              bottom: '40px',
-              borderLeft: '2px solid #333',
-              borderBottom: '2px solid #333',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between'
-            }}>
-              {[5, 4, 3, 2, 1, 0].map((d) => (
-                <div key={d} style={{ width: '100%', borderBottom: d === 0 ? 'none' : '1px solid #e0e0e0', position: 'relative' }}>
-                  <span style={{ position: 'absolute', left: '-42px', top: '-8px', fontSize: '12px', fontWeight: 600, color: '#555' }}>
-                    Day {d}
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {/* Bars Container */}
-            <div style={{
-              position: 'absolute',
-              top: '20px',
-              left: '55px',
-              right: '20px',
-              bottom: '42px',
-              display: 'flex',
-              justifyContent: 'space-around',
-              alignItems: 'flex-end',
-              zIndex: 10,
-              height: 'calc(100% - 62px)'
-            }}>
-              {daysBySubject.map((s, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'flex-end',
-                    alignItems: 'center',
-                    width: '35px',
-                    height: '100%',
-                    position: 'relative'
-                  }}
-                >
-                  <div className="bar-value" style={{ fontSize: '12px', fontWeight: 700, color: '#333', marginBottom: '6px', opacity: 0 }}>
-                    {s.days}
-                  </div>
-                  <div
-                    className="bar-element"
-                    data-height={`${s.percent}%`}
-                    style={{
-                      width: '100%',
-                      borderRadius: '6px 6px 0 0',
-                      backgroundColor: s.color,
-                      height: '0%'
-                    }}
-                  />
-                  <div style={{ position: 'absolute', bottom: '-25px', fontWeight: 600, fontSize: '12px', color: '#555', textAlign: 'center', width: '100%', whiteSpace: 'nowrap' }}>
-                    {s.subject}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Subject Details Rows */}
-          <div style={{ marginTop: '30px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {highlights.map((h, i) => (
-              <div
-                key={i}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  background: '#f0f4f8',
-                  padding: '12px 16px',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  fontWeight: 600
-                }}
-              >
-                <span>
-                  <strong style={{ color: h.color }}>{h.subject}:</strong> {h.text}
-                </span>
-                <span style={{ color: '#4a315d' }}>{h.days}</span>
-              </div>
-            ))}
           </div>
         </div>
 

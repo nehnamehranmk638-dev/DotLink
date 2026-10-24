@@ -4,6 +4,7 @@ import Navbar from './components/Navbar';
 import Landing from './pages/Landing';
 import Login from './pages/parent/Login';
 import ParentHub from './pages/parent/ParentHub';
+import DailySnapshot from './pages/parent/DailySnapshot';
 import WeeklyStudentDashboard from './pages/parent/WeeklyStudentDashboard';
 import KidsSpaceEntry from './pages/parent/KidsSpaceEntry';
 import Curriculum from './pages/parent/Curriculum';
@@ -25,8 +26,8 @@ function ProtectedRoute({ children }) {
 
 function NavigationWrapper() {
   const location = useLocation();
-  // Hide default navbar on full-screen custom pages (Landing, Choose Chapter, Kids Entry, Parent Hub, Weekly Dashboard, Login, Signup, Curriculum, Dev Remediation)
-  const hideNavbarOn = ['/', '/chapters', '/kids-entry', '/dashboard', '/analytics', '/login', '/signup', '/curriculum', '/dev/remediation'];
+  // Hide default navbar on full-screen custom pages (Landing, Choose Chapter, Kids Entry, Parent Hub, Daily Snapshot, Weekly Dashboard, Login, Signup, Curriculum, Dev Remediation)
+  const hideNavbarOn = ['/', '/chapters', '/kids-entry', '/dashboard', '/analytics', '/daily-snapshot', '/weekly-journey', '/login', '/signup', '/curriculum', '/dev/remediation'];
   const showNav = !hideNavbarOn.includes(location.pathname);
 
   return (
@@ -46,12 +47,32 @@ function NavigationWrapper() {
           }
         />
 
-        {/* Weekly Student Dashboard with Attentivity, Accuracy & Subject Charts */}
+        {/* Daily Snapshot Page */}
+        <Route
+          path="/daily-snapshot"
+          element={
+            <ProtectedRoute>
+              <DailySnapshot />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Weekly Journey Page */}
+        <Route
+          path="/weekly-journey"
+          element={
+            <ProtectedRoute>
+              <WeeklyStudentDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Legacy /analytics route defaults to Daily Snapshot */}
         <Route
           path="/analytics"
           element={
             <ProtectedRoute>
-              <WeeklyStudentDashboard />
+              <DailySnapshot />
             </ProtectedRoute>
           }
         />

@@ -5,16 +5,18 @@ import { api } from '../../api';
 
 export default function ParentHub() {
   const navigate = useNavigate();
-  const [children, setChildren] = useState([]);
-  const [activeChild, setActiveChild] = useState(api.getActiveChild());
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackRating, setFeedbackRating] = useState(5);
   const [feedbackComment, setFeedbackComment] = useState('');
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
-  const user = api.getUser();
 
   useEffect(() => {
-    loadChildren();
+    // Ensure an active child is set in session if available
+    api.getChildren().then((kids) => {
+      if (kids && kids.length > 0 && !api.getActiveChild()) {
+        api.setActiveChild(kids[0]);
+      }
+    }).catch(console.error);
 
     // Entrance Animation
     animate('#dashboard-container', {
@@ -26,24 +28,6 @@ export default function ParentHub() {
       ease: 'outBack'
     });
   }, []);
-
-  const loadChildren = async () => {
-    try {
-      const kids = await api.getChildren();
-      setChildren(kids || []);
-      if (kids && kids.length > 0 && !activeChild) {
-        api.setActiveChild(kids[0]);
-        setActiveChild(kids[0]);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const handleSelectChild = (kid) => {
-    api.setActiveChild(kid);
-    setActiveChild(kid);
-  };
 
   const handleLogout = () => {
     api.logout();
@@ -71,73 +55,47 @@ export default function ParentHub() {
       padding: '24px 16px',
       color: '#4a315d'
     }}>
-      {/* Top Bar with Child Switcher & Logout */}
+      {/* Top Bar with Home & Logout */}
       <div style={{
         width: '100%',
         maxWidth: '720px',
         display: 'flex',
-        justifyContent: 'space-between',
+        justifyContent: 'flex-end',
         alignItems: 'center',
         marginBottom: '16px',
         flexWrap: 'wrap',
-        gap: '12px'
+        gap: '10px'
       }}>
-        {/* Child Selector */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontWeight: 800, color: '#312340', fontSize: '0.95rem' }}>Active Child:</span>
-          {children.map((k) => (
-            <button
-              key={k.id}
-              onClick={() => handleSelectChild(k)}
-              style={{
-                backgroundColor: activeChild?.id === k.id ? '#45335d' : 'rgba(255, 255, 255, 0.7)',
-                color: activeChild?.id === k.id ? 'white' : '#45335d',
-                border: '2px solid white',
-                borderRadius: '9999px',
-                padding: '6px 14px',
-                fontWeight: 700,
-                fontSize: '0.85rem',
-                cursor: 'pointer',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.1)'
-              }}
-            >
-              ⭐ {k.name} (Gr {k.grade})
-            </button>
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            onClick={() => navigate('/')}
-            style={{
-              backgroundColor: 'white',
-              color: '#45335d',
-              border: 'none',
-              borderRadius: '9999px',
-              padding: '6px 16px',
-              fontWeight: 700,
-              fontSize: '0.85rem',
-              cursor: 'pointer'
-            }}
-          >
-            🏠 Home
-          </button>
-          <button
-            onClick={handleLogout}
-            style={{
-              backgroundColor: '#fca5a5',
-              color: '#7f1d1d',
-              border: 'none',
-              borderRadius: '9999px',
-              padding: '6px 16px',
-              fontWeight: 700,
-              fontSize: '0.85rem',
-              cursor: 'pointer'
-            }}
-          >
-            Log Out
-          </button>
-        </div>
+        <button
+          onClick={() => navigate('/')}
+          style={{
+            backgroundColor: 'white',
+            color: '#45335d',
+            border: 'none',
+            borderRadius: '9999px',
+            padding: '6px 16px',
+            fontWeight: 700,
+            fontSize: '0.85rem',
+            cursor: 'pointer'
+          }}
+        >
+          🏠 Home
+        </button>
+        <button
+          onClick={handleLogout}
+          style={{
+            backgroundColor: '#fca5a5',
+            color: '#7f1d1d',
+            border: 'none',
+            borderRadius: '9999px',
+            padding: '6px 16px',
+            fontWeight: 700,
+            fontSize: '0.85rem',
+            cursor: 'pointer'
+          }}
+        >
+          Log Out
+        </button>
       </div>
 
       {/* Main Container */}
@@ -171,7 +129,7 @@ export default function ParentHub() {
           }}>
             {/* Button 1: Daily Snapshot */}
             <button
-              onClick={() => navigate('/analytics')}
+              onClick={() => navigate('/daily-snapshot')}
               style={{
                 width: '100%',
                 backgroundColor: '#b5d5f5',
@@ -209,7 +167,7 @@ export default function ParentHub() {
 
             {/* Button 2: This Week's Journey */}
             <button
-              onClick={() => navigate('/analytics')}
+              onClick={() => navigate('/weekly-journey')}
               style={{
                 width: '100%',
                 backgroundColor: '#ffc4cf',

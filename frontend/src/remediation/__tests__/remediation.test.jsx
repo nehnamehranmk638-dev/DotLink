@@ -1,8 +1,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import RemediationGame from '../RemediationGame';
-import { useRemediationFlow, submitRemediationLog } from '../useRemediationFlow';
+import { submitRemediationLog } from '../useRemediationFlow';
 import { MOCK_CONFIGS } from '../mockConfigs';
 
 describe('RemediationGame Component Integration', () => {

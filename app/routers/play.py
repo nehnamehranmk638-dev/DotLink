@@ -14,7 +14,8 @@ async def get_child_topics_with_lock_state(child_id: str, db, parent_id: Optiona
     """
     Derives lock and mastery status deterministically:
     - Strictly filters by parent_id to prevent cross-parent data leak.
-    - Includes both 'approved' and 'needs_review' generated lessons so they can be played.
+    - Approved topics in the original chapter version appear as they become ready.
+    - Replacement chapters go live only when their full version is approved.
     - First topic in a textbook is always unlocked.
     - Subsequent topics in chapter/topic order unlock when the previous topic has a passed quiz_submission.
     """
@@ -29,7 +30,14 @@ async def get_child_topics_with_lock_state(child_id: str, db, parent_id: Optiona
             SELECT t.*, tb.title as textbook_title, tb.grade, tb.parent_id
             FROM topics t
             JOIN textbooks tb ON t.textbook_id = tb.id
-            WHERE tb.parent_id = ? AND t.status IN ('approved', 'needs_review')
+            WHERE tb.parent_id = ? AND t.status = 'approved' AND t.version = (
+                SELECT MAX(v.version) FROM topics v WHERE v.textbook_id = t.textbook_id
+                AND v.chapter_number = t.chapter_number AND v.status = 'approved'
+                AND (v.version = (SELECT MIN(original.version) FROM topics original
+                    WHERE original.textbook_id = v.textbook_id AND original.chapter_number = v.chapter_number)
+                OR NOT EXISTS (SELECT 1 FROM topics pending WHERE pending.textbook_id = v.textbook_id
+                    AND pending.chapter_number = v.chapter_number AND pending.version = v.version
+                    AND pending.status != 'approved')))
             ORDER BY t.textbook_id ASC, t.chapter_number ASC, t.topic_number ASC, t.start_page ASC
         """, (parent_id,))
     else:
@@ -37,7 +45,14 @@ async def get_child_topics_with_lock_state(child_id: str, db, parent_id: Optiona
             SELECT t.*, tb.title as textbook_title, tb.grade, tb.parent_id
             FROM topics t
             JOIN textbooks tb ON t.textbook_id = tb.id
-            WHERE t.status IN ('approved', 'needs_review')
+            WHERE t.status = 'approved' AND t.version = (
+                SELECT MAX(v.version) FROM topics v WHERE v.textbook_id = t.textbook_id
+                AND v.chapter_number = t.chapter_number AND v.status = 'approved'
+                AND (v.version = (SELECT MIN(original.version) FROM topics original
+                    WHERE original.textbook_id = v.textbook_id AND original.chapter_number = v.chapter_number)
+                OR NOT EXISTS (SELECT 1 FROM topics pending WHERE pending.textbook_id = v.textbook_id
+                    AND pending.chapter_number = v.chapter_number AND pending.version = v.version
+                    AND pending.status != 'approved')))
             ORDER BY t.textbook_id ASC, t.chapter_number ASC, t.topic_number ASC, t.start_page ASC
         """)
     all_topics = await cursor.fetchall()
@@ -57,6 +72,15 @@ async def get_child_topics_with_lock_state(child_id: str, db, parent_id: Optiona
         if tb_id not in textbook_map:
             textbook_map[tb_id] = []
         textbook_map[tb_id].append(dict(t))
+
+    study_cursor = await db.execute("""
+        SELECT s.topic_id, MAX(s.last_scene_index) as last_scene,
+               SUM(s.active_focus_seconds) as focus_seconds, COUNT(*) as session_count
+        FROM sessions s WHERE s.child_id = ? GROUP BY s.topic_id
+    """, (child_id,))
+    study = {row["topic_id"]: dict(row) for row in await study_cursor.fetchall()}
+    bundles_cursor = await db.execute("SELECT topic_id, scenes_json FROM lesson_bundles")
+    scene_counts = {row["topic_id"]: len(json.loads(row["scenes_json"])) for row in await bundles_cursor.fetchall()}
 
     result = []
     for tb_id, topics in textbook_map.items():
@@ -97,7 +121,9 @@ async def get_child_topics_with_lock_state(child_id: str, db, parent_id: Optiona
                 "is_mastered": is_mastered,
                 "has_active_session": bool(active_sess),
                 "active_session_id": active_sess["id"] if active_sess else None,
-                "last_scene_index": active_sess["last_scene_index"] if active_sess else 0
+                "last_scene_index": active_sess["last_scene_index"] if active_sess else 0,
+                "study_progress": 100 if is_mastered else round(100 * min(scene_counts.get(top["id"], 0), study[top["id"]]["last_scene"] + 1) / max(1, scene_counts.get(top["id"], 0))) if top["id"] in study else 0,
+                "focus_seconds": study.get(top["id"], {}).get("focus_seconds", 0)
             })
             prev_mastered = is_mastered
 
@@ -110,10 +136,33 @@ async def get_play_topics(child_id: str, parent: dict = Depends(get_current_pare
     try:
         child = await verify_child_ownership(child_id, parent["id"], db)
         topics = await get_child_topics_with_lock_state(child_id, db, parent_id=parent["id"])
-        return {
-            "child": child,
-            "topics": topics
-        }
+        chapter_cursor = await db.execute("""
+            SELECT t.textbook_id, t.chapter_number, MAX(t.chapter_title) as chapter_title,
+                   MAX(t.subject_tag) as subject_tag
+            FROM topics t JOIN textbooks tb ON tb.id = t.textbook_id
+            WHERE tb.parent_id = ? GROUP BY t.textbook_id, t.chapter_number
+            ORDER BY tb.created_at, t.chapter_number
+        """, (parent["id"],))
+        chapters = [dict(row) for row in await chapter_cursor.fetchall()]
+        # Show that a generated lesson exists without granting access before
+        # approval. Replacement drafts stay out of the child's live chapter.
+        pending_cursor = await db.execute("""
+            SELECT t.id, t.name, t.chapter_number, t.chapter_title, t.topic_number,
+                   t.subject_tag, t.start_page, t.end_page, t.textbook_id, t.version,
+                   tb.title AS textbook_title
+            FROM topics t JOIN textbooks tb ON tb.id = t.textbook_id
+            WHERE tb.parent_id = ? AND t.status = 'needs_review'
+              AND EXISTS (SELECT 1 FROM lesson_bundles lb WHERE lb.topic_id = t.id)
+              AND t.version = (SELECT MAX(latest.version) FROM topics latest
+                  WHERE latest.textbook_id = t.textbook_id AND latest.chapter_number = t.chapter_number)
+              AND NOT EXISTS (SELECT 1 FROM topics live
+                  WHERE live.textbook_id = t.textbook_id AND live.chapter_number = t.chapter_number
+                    AND live.version < t.version AND live.status = 'approved')
+            ORDER BY tb.created_at DESC, t.chapter_number, t.topic_number
+        """, (parent["id"],))
+        pending_lessons = [dict(row, status="needs_review", is_pending_review=True, is_unlocked=False)
+                           for row in await pending_cursor.fetchall()]
+        return {"child": child, "topics": topics, "chapters": chapters, "pending_lessons": pending_lessons}
     finally:
         await db.close()
 
@@ -142,7 +191,7 @@ async def start_or_resume_session(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Topic not found or does not belong to parent."
             )
-        if topic["status"] not in ("approved", "needs_review"):
+        if topic["status"] != "approved":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Topic is not ready for learning."
@@ -281,6 +330,9 @@ async def get_session_details(id: str, parent: dict = Depends(get_current_parent
 
         highlighted_words = []
         for s in scenes:
+            if s.get("highlighted_words"):
+                highlighted_words.extend(s["highlighted_words"])
+                continue
             title = s.get("title", "")
             words = title.split()
             if words:

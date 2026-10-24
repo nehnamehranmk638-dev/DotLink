@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import AnimatedStage from './AnimatedStage';
 import { sound } from '../../utils/soundEffects';
+import { useRemediationFlow } from '../../remediation';
+import StudentInactivity from '../../components/StudentInactivity';
 
 export default function AnimatedLessonPlayer() {
   const { sessionId } = useParams();
@@ -10,6 +12,7 @@ export default function AnimatedLessonPlayer() {
 
   // Session & Bundle State
   const [session, setSession] = useState(null);
+  const [sessionError, setSessionError] = useState('');
   const [activeChild, setActiveChild] = useState(api.getActiveChild());
   const [scenes, setScenes] = useState([]);
   const [currentSceneIdx, setCurrentSceneIdx] = useState(0);
@@ -27,7 +30,7 @@ export default function AnimatedLessonPlayer() {
   const [speechSupported, setSpeechSupported] = useState(true);
   const [speechRate, setSpeechRate] = useState(0.95);
   const [currentSpokenWordIdx, setCurrentSpokenWordIdx] = useState(-1);
-  const [isMuted, setIsMuted] = useState(false);
+  const [isMuted, setIsMuted] = useState(sound.muted);
   const fallbackIntervalRef = useRef(null);
 
   // Live Revision Sheet Drawer
@@ -37,24 +40,42 @@ export default function AnimatedLessonPlayer() {
   // Question Button Lock Countdown (3s lock)
   const [buttonLocked, setButtonLocked] = useState(false);
   const [lockCountdown, setLockCountdown] = useState(0);
-  const [lockExpiryTimestamp, setLockExpiryTimestamp] = useState(null);
   const [selectedAnswer, setSelectedAnswer] = useState(null);
   const [attemptNumber, setAttemptNumber] = useState(1);
   const [hintText, setHintText] = useState(null);
   const [explanationText, setExplanationText] = useState(null);
   const [evaluationFeedback, setEvaluationFeedback] = useState(null);
 
-  // Low Engagement Mini-Game Modal State
-  const [miniGameOpen, setMiniGameOpen] = useState(false);
-  const [miniGamePairs, setMiniGamePairs] = useState([]);
-  const [gameSelectedLeft, setGameSelectedLeft] = useState(null);
-  const [gameMatchedPairs, setGameMatchedPairs] = useState(new Set());
-  const [miniGameTimeLeft, setMiniGameTimeLeft] = useState(60);
-
-  // Idle Timer / Heartbeat
-  const [showIdleModal, setShowIdleModal] = useState(false);
-  const [idleCountdown, setIdleCountdown] = useState(30);
-  const lastInteractionRef = useRef(Date.now());
+  const [idlePaused, setIdlePaused] = useState(false);
+  const [answerPending, setAnswerPending] = useState(false);
+  const [answerError, setAnswerError] = useState('');
+  const lastInteractionRef = useRef(0);
+  const completedQuestions = useRef(new Set());
+  const practiceResponse = useRef(null);
+  const busy = useRef(false);
+  const responseClock = useRef(0);
+  const feedbackTimer = useRef(null);
+  const flow = useRemediationFlow({ reduceMotion: localStorage.getItem('dotlink_reduce_motion') === 'true', soundEnabled: !isMuted });
+  const paused = flow.isRemediating || idlePaused || showResumeModal;
+  useEffect(() => {
+    if (paused || lockCountdown <= 0) return;
+    const timer = setTimeout(() => {
+      setLockCountdown(value => Math.max(0, value - 1));
+      if (lockCountdown <= 1) { setButtonLocked(false); responseClock.current = 0; }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [paused, lockCountdown]);
+  useEffect(() => {
+    if (paused || !activeQuestion || answerPending || explanationText) return;
+    const timer = setInterval(() => { if (!buttonLocked) responseClock.current += .1; }, 100);
+    return () => clearInterval(timer);
+  }, [paused, activeQuestion, answerPending, buttonLocked, explanationText]);
+  useEffect(() => {
+    if (paused || !session) return;
+    const timer = setInterval(() => api.postHeartbeat(sessionId).catch(() => {}), 10000);
+    return () => clearInterval(timer);
+  }, [paused, session, sessionId]);
+  useEffect(() => () => { clearTimeout(feedbackTimer.current); }, []);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -69,13 +90,14 @@ export default function AnimatedLessonPlayer() {
   }, [sessionId]);
 
   const initSession = async () => {
+    setSessionError('');
     try {
       const activeKid = api.getActiveChild();
       setActiveChild(activeKid);
 
       // Fetch session from db via router directly without redundant pre-call
-      const sessData = await fetchSessionData();
-      if (!sessData) return;
+      const sessData = await api.getSessionDetails(sessionId);
+      if (!sessData.scenes?.length) throw new Error('This lesson has no scenes yet. Ask your parent to check it in Curriculum.');
 
       setSession(sessData);
       setScenes(sessData.scenes || []);
@@ -93,20 +115,8 @@ export default function AnimatedLessonPlayer() {
         speakScene(sessData.scenes[0]?.narration_text);
       }
     } catch (err) {
-      console.error(err);
+      setSessionError(err.message || 'Could not load this lesson. Please try again.');
     }
-  };
-
-  const fetchSessionData = async () => {
-    const token = localStorage.getItem('dotlink_token');
-    const res = await fetch(`http://localhost:8000/sessions/${sessionId}/details`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!res.ok) {
-      // Direct fallback
-      return null;
-    }
-    return res.json();
   };
 
   // Speak Narration using Web SpeechSynthesis API with karaoke word-by-word tracking
@@ -242,110 +252,54 @@ export default function AnimatedLessonPlayer() {
     setExplanationText(null);
     setEvaluationFeedback(null);
 
-    // Anti-rushing lock: 3 seconds countdown
-    setButtonLocked(true);
-    setLockCountdown(3);
-    const lockTimer = setInterval(() => {
-      setLockCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(lockTimer);
-          setButtonLocked(false);
-          setLockExpiryTimestamp(Date.now());
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    setButtonLocked(true); setLockCountdown(3); responseClock.current = 0;
   };
 
-  const handleAnswerSubmit = async (ans) => {
-    if (buttonLocked || !activeQuestion) return;
-    lastInteractionRef.current = Date.now();
+  const finishQuestion = () => {
+    if (activeQuestion) completedQuestions.current.add(activeQuestion.id);
+    setActiveQuestion(null); setExplanationText(null); setEvaluationFeedback(null);
+    goToNextScene();
+  };
+  const handleAnswerSubmit = async ans => {
+    if (buttonLocked || paused || busy.current || !activeQuestion || explanationText || evaluationFeedback === 'correct') return;
     setSelectedAnswer(ans);
-
-    const timeTaken = lockExpiryTimestamp ? Math.max(0.1, (Date.now() - lockExpiryTimestamp) / 1000) : 1.5;
-
-    try {
-      const res = await api.adaptiveInteract({
-        session_id: sessionId,
-        interaction_type: 'answer_submit',
-        question_id: activeQuestion.id,
-        selected_answer: ans,
-        attempt_number: attemptNumber,
-        time_taken: timeTaken
-      });
-
-      if (res.is_correct) {
-        setEvaluationFeedback('correct');
-        if (res.unlocked_bullet) {
-          setUnlockedBullets((prev) => [...prev, res.unlocked_bullet]);
-        }
-        setTimeout(() => {
-          setActiveQuestion(null);
-          goToNextScene();
-        }, 1500);
-      } else {
-        if (res.can_retry) {
-          setEvaluationFeedback('wrong_first');
-          setHintText(res.hint_text);
-          setAttemptNumber(2);
-          // 2 seconds lock before retry
-          setButtonLocked(true);
-          setLockCountdown(2);
-          const rTimer = setInterval(() => {
-            setLockCountdown((prev) => {
-              if (prev <= 1) {
-                clearInterval(rTimer);
-                setButtonLocked(false);
-                setLockExpiryTimestamp(Date.now());
-                return 0;
-              }
-              return prev - 1;
-            });
-          }, 1000);
-        } else {
-          setEvaluationFeedback('wrong_second');
-          setExplanationText(res.explanation_text);
-          setTimeout(() => {
-            setActiveQuestion(null);
-            goToNextScene();
-          }, 3500);
-        }
-      }
-
-      if (res.trigger_mini_game && res.mini_game_config?.pairs) {
-        // Trigger 60s Match-the-Pairs Mini-Game
-        setMiniGamePairs(res.mini_game_config.pairs);
-        setGameMatchedPairs(new Set());
-        setMiniGameTimeLeft(60);
-        setMiniGameOpen(true);
-      }
-    } catch (err) {
-      console.error(err);
+    if (practiceResponse.current) {
+      setExplanationText(practiceResponse.current.explanation_text || activeQuestion.explanation_text);
+      practiceResponse.current = null; setEvaluationFeedback('explained'); return;
     }
+    busy.current = true; setAnswerPending(true); setAnswerError('');
+    try {
+      const res = await api.adaptiveInteract({ session_id: sessionId, interaction_type: 'answer_submit',
+        question_id: activeQuestion.id, selected_answer: ans, attempt_number: attemptNumber,
+        time_taken: Math.min(300, Math.max(.1, responseClock.current)) });
+      if (res.lesson_variant) setScenes(previous => previous.map(scene => ({ ...scene, narration_text: scene.narration_variants?.[res.lesson_variant] || scene.narration_text })));
+      if (flow.triggerRemediation(res, () => {
+        practiceResponse.current = res; setSelectedAnswer(null); setHintText(null); setEvaluationFeedback('practice'); responseClock.current = 0;
+      }, { sessionId, quizSet: 'quiz_a', questionId: activeQuestion.id })) { setEvaluationFeedback('remediation'); return; }
+      if (res.is_correct) {
+        setEvaluationFeedback('correct'); sound.playSuccess();
+        if (res.unlocked_bullet) setUnlockedBullets(prev => [...prev, res.unlocked_bullet]);
+        feedbackTimer.current = setTimeout(finishQuestion, 1500);
+      } else if (res.can_retry) {
+        setHintText(res.hint_text); setAttemptNumber(2); setEvaluationFeedback('hint');
+        setButtonLocked(true); setLockCountdown(2); responseClock.current = 0;
+
+      } else { setExplanationText(res.explanation_text); setEvaluationFeedback('explained'); }
+    } catch (error) { setAnswerError(error.message); }
+    finally { busy.current = false; setAnswerPending(false); }
   };
 
   const goToNextScene = async () => {
     handleStopSpeaking();
     sound.playChime();
+    const questionForScene = inVideoQuestions.find(q => q.scene_num === currentSceneIdx + 1 && !completedQuestions.current.has(q.id));
+    if (questionForScene) { triggerQuestionModal(questionForScene); return; }
     const nextIdx = currentSceneIdx + 1;
     if (nextIdx < scenes.length) {
-      // Check if there is an in-video question scheduled after this scene
-      const questionForScene = inVideoQuestions.find((q) => q.scene_num === currentSceneIdx + 1);
-      if (questionForScene && !activeQuestion) {
-        triggerQuestionModal(questionForScene);
-        return;
-      }
-
       setCurrentSceneIdx(nextIdx);
       speakScene(scenes[nextIdx]?.narration_text);
       // Save position to server
-      const token = localStorage.getItem('dotlink_token');
-      await fetch(`http://localhost:8000/sessions/${sessionId}/update-scene`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ scene_index: nextIdx })
-      }).catch(() => {});
+      await api.updateSessionScene(sessionId, nextIdx).catch(() => {});
     } else {
       // Lesson finished -> Launch Quiz Set A
       sound.playSuccess();
@@ -356,12 +310,7 @@ export default function AnimatedLessonPlayer() {
   const handlePauseAndExit = async () => {
     handleStopSpeaking();
     sound.playPop();
-    const token = localStorage.getItem('dotlink_token');
-    await fetch(`http://localhost:8000/sessions/${sessionId}/pause`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ scene_index: currentSceneIdx })
-    }).catch(() => {});
+    await api.pauseSession(sessionId, currentSceneIdx).catch(() => {});
     navigate('/play');
   };
 
@@ -420,6 +369,12 @@ export default function AnimatedLessonPlayer() {
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px', position: 'relative' }}>
+      {flow.remediationPopup}
+      <StudentInactivity paused={flow.isRemediating || showResumeModal || !session}
+        onPause={() => { setIdlePaused(true); handleStopSpeaking(); }}
+        onResume={() => { setIdlePaused(false); api.postIdle(sessionId, { responded: true }).catch(() => {}); }}
+        onAutoPause={() => { api.postIdle(sessionId, { responded: false }).catch(() => {}); handlePauseAndExit(); }} />
+      <div inert={flow.isRemediating || idlePaused ? true : undefined}>
       {/* Top Session Bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -460,7 +415,12 @@ export default function AnimatedLessonPlayer() {
       </div>
 
       {/* Main Animated Scene Card */}
-      {currentScene ? (
+      {sessionError ? (
+        <div role="alert" className="glass-panel" style={{ padding: '32px' }}>
+          <p>{sessionError}</p>
+          <button className="btn btn-primary" onClick={initSession}>Try opening lesson again</button>
+        </div>
+      ) : currentScene ? (
         <div className="glass-panel-elevated" style={{ padding: '28px', minHeight: '520px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
           {/* Dynamic Anime.js Animated Educational Stage */}
           <AnimatedStage
@@ -619,7 +579,7 @@ export default function AnimatedLessonPlayer() {
               <span className="badge badge-accent">Mid-Lesson Check</span>
               {buttonLocked && (
                 <span className="badge badge-warning" style={{ background: '#f59e0b', color: '#111827' }}>
-                  ⏳ Please read: Buttons unlock in {lockCountdown}s
+                  ⏳ Please read: Take a moment to read
                 </span>
               )}
             </div>
@@ -628,6 +588,10 @@ export default function AnimatedLessonPlayer() {
               {activeQuestion.question_text}
             </h3>
 
+            {answerError && <p role="alert">{answerError}</p>}
+            {evaluationFeedback === 'correct' && <p role="status">🎉 Nice work! You’ve got it!</p>}
+            {evaluationFeedback === 'practice' && <p role="status">Let’s try the same question with our new steps.</p>}
+            {explanationText && <button className="btn btn-primary" style={{ minHeight: 56 }} onClick={finishQuestion}>Continue →</button>}
             {hintText && (
               <div style={{ background: 'rgba(245, 158, 11, 0.15)', border: '1px solid #f59e0b', color: '#fde68a', padding: '12px', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.9rem' }}>
                 💡 <strong>Hint:</strong> {hintText}
@@ -644,8 +608,9 @@ export default function AnimatedLessonPlayer() {
               {activeQuestion.options.map((opt, idx) => (
                 <button
                   key={idx}
-                  className="btn btn-secondary"
-                  disabled={buttonLocked}
+                  id={`${activeQuestion.id}-option-${idx}`}
+                  className={`btn btn-secondary quiz-option ${flow.highlightedId === `${activeQuestion.id}-option-${idx}` ? 'aha-glow' : ''}`}
+                  disabled={buttonLocked || paused || answerPending || !!explanationText || evaluationFeedback === 'correct'}
                   style={{
                     justifyContent: 'flex-start',
                     padding: '16px 20px',
@@ -654,10 +619,10 @@ export default function AnimatedLessonPlayer() {
                     background: selectedAnswer === opt
                       ? evaluationFeedback === 'correct'
                         ? 'rgba(16, 185, 129, 0.3)'
-                        : 'rgba(239, 68, 68, 0.3)'
+                        : 'rgba(164, 183, 134, 0.2)'
                       : 'rgba(15, 23, 42, 0.7)',
                     borderColor: selectedAnswer === opt
-                      ? evaluationFeedback === 'correct' ? '#10b981' : '#ef4444'
+                      ? evaluationFeedback === 'correct' ? '#10b981' : '#a4b786'
                       : 'var(--border-subtle)'
                   }}
                   onClick={() => handleAnswerSubmit(opt)}
@@ -726,6 +691,7 @@ export default function AnimatedLessonPlayer() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

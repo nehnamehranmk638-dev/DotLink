@@ -1,4 +1,5 @@
 import os
+import asyncio
 import io
 import json
 import uuid
@@ -37,7 +38,7 @@ def extract_pdf_pages(pdf_bytes: bytes) -> List[Dict[str, Any]]:
         page_num = idx + 1
         text = page.extract_text() or ""
         # Clean text
-        cleaned = "\n".join([line.strip() for line in text.splitlines() if line.strip()])
+        cleaned = "\n".join(line.strip() for line in text.splitlines())
         pages.append({
             "page_number": page_num,
             "text": cleaned
@@ -99,7 +100,7 @@ async def ingest_uploaded_textbook(
     3. Stores PDF in Supabase/local storage
     4. Registers textbook and source_pages in database
     """
-    pages = extract_pdf_pages(pdf_bytes)
+    pages = await asyncio.to_thread(extract_pdf_pages, pdf_bytes)
     validate_selectable_text(pages)
     page_count = len(pages)
 
@@ -114,13 +115,11 @@ async def ingest_uploaded_textbook(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (textbook_id, parent_id, grade, subject_tag, title, ncert_code, storage_path, page_count))
 
-    # Insert source_pages rows
-    for p in pages:
-        page_id = str(uuid.uuid4())
-        await db.execute("""
-            INSERT INTO source_pages (id, textbook_id, topic_id, page_number, text)
-            VALUES (?, ?, NULL, ?, ?)
-        """, (page_id, textbook_id, p["page_number"], p["text"]))
+    # Batch inserts avoid one async round-trip per PDF page.
+    await db.executemany("""
+        INSERT INTO source_pages (id, textbook_id, topic_id, page_number, text)
+        VALUES (?, ?, NULL, ?, ?)
+    """, [(str(uuid.uuid4()), textbook_id, p["page_number"], p["text"]) for p in pages])
 
     await db.commit()
     return textbook_id, page_count, pages
@@ -153,7 +152,7 @@ async def ingest_pdf_content(
     with open(storage_path, "wb") as f:
         f.write(pdf_bytes)
 
-    pages = extract_pdf_pages(pdf_bytes)
+    pages = await asyncio.to_thread(extract_pdf_pages, pdf_bytes)
     page_count = len(pages)
 
     # Insert textbooks row
@@ -162,13 +161,10 @@ async def ingest_pdf_content(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, (textbook_id, parent_id, grade, subject_tag, title, ncert_code, storage_path, page_count))
 
-    # Insert source_pages rows
-    for p in pages:
-        page_id = str(uuid.uuid4())
-        await db.execute("""
-            INSERT INTO source_pages (id, textbook_id, topic_id, page_number, text)
-            VALUES (?, ?, NULL, ?, ?)
-        """, (page_id, textbook_id, p["page_number"], p["text"]))
+    await db.executemany("""
+        INSERT INTO source_pages (id, textbook_id, topic_id, page_number, text)
+        VALUES (?, ?, NULL, ?, ?)
+    """, [(str(uuid.uuid4()), textbook_id, p["page_number"], p["text"]) for p in pages])
 
     await db.commit()
     return textbook_id, page_count, pages

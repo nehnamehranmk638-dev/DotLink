@@ -7,16 +7,39 @@ export default function StudentDashboard() {
   const [activeChild, setActiveChild] = useState(api.getActiveChild());
   const [children, setChildren] = useState([]);
   const [topics, setTopics] = useState([]);
+  const [pendingLessons, setPendingLessons] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState('ALL');
   const [loading, setLoading] = useState(true);
   const [startingTopicId, setStartingTopicId] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     loadStudentData();
   }, []);
 
+  // A child's page may remain open while a parent generates or approves a lesson.
+  useEffect(() => {
+    if (!activeChild?.id) return;
+    let current = true;
+    const refresh = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const res = await api.getPlayTopics(activeChild.id);
+        if (current) {
+          setTopics(res.topics || []);
+          setPendingLessons(res.pending_lessons || []);
+          setLoadError('');
+        }
+      } catch { /* Keep the last successful lesson list during a background refresh. */ }
+    };
+    const interval = setInterval(refresh, 5000);
+    window.addEventListener('focus', refresh);
+    return () => { current = false; clearInterval(interval); window.removeEventListener('focus', refresh); };
+  }, [activeChild?.id]);
+
   const loadStudentData = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       let kids = await api.getChildren();
       if (!kids || kids.length === 0) {
@@ -50,9 +73,10 @@ export default function StudentDashboard() {
       if (currentKid) {
         const res = await api.getPlayTopics(currentKid.id);
         setTopics(res.topics || []);
+        setPendingLessons(res.pending_lessons || []);
       }
     } catch (err) {
-      console.error(err);
+      setLoadError(err.message || 'Could not load lessons. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -62,11 +86,16 @@ export default function StudentDashboard() {
     api.setActiveChild(kid);
     setActiveChild(kid);
     setLoading(true);
+    setSelectedSubject('ALL');
+    setLoadError('');
+    setTopics([]);
+    setPendingLessons([]);
     try {
       const res = await api.getPlayTopics(kid.id);
       setTopics(res.topics || []);
+      setPendingLessons(res.pending_lessons || []);
     } catch (err) {
-      console.error(err);
+      setLoadError(err.message || 'Could not load lessons. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -90,22 +119,12 @@ export default function StudentDashboard() {
     }
   };
 
-  // Add getPlayTopics to api.js if not already present
-  if (!api.getPlayTopics) {
-    api.getPlayTopics = async (childId) => {
-      const token = localStorage.getItem('dotlink_token');
-      const res = await fetch(`http://localhost:8000/play/topics/${childId}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
-      return res.json();
-    };
-  }
-
-  const uniqueSubjects = Array.from(new Set(topics.map((t) => t.subject_tag).filter(Boolean)));
+  const visibleLessons = [...topics, ...pendingLessons];
+  const uniqueSubjects = Array.from(new Set(visibleLessons.map((t) => t.subject_tag).filter(Boolean)));
   const subjects = ['ALL', ...uniqueSubjects];
   const filteredTopics = selectedSubject === 'ALL'
-    ? topics
-    : topics.filter((t) => (t.subject_tag || '').toLowerCase() === selectedSubject.toLowerCase());
+    ? visibleLessons
+    : visibleLessons.filter((t) => (t.subject_tag || '').toLowerCase() === selectedSubject.toLowerCase());
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '32px 24px' }}>
@@ -219,12 +238,17 @@ export default function StudentDashboard() {
         <div style={{ textAlign: 'center', padding: '60px', color: 'var(--text-muted)' }}>
           <p style={{ fontSize: '1.2rem' }}>Loading approved NCERT topics...</p>
         </div>
+      ) : loadError ? (
+        <div role="alert" className="glass-panel" style={{ padding: '32px' }}>
+          <p>{loadError}</p>
+          <button className="btn btn-primary" onClick={loadStudentData}>Try loading lessons again</button>
+        </div>
       ) : filteredTopics.length === 0 ? (
         <div className="glass-panel" style={{ textAlign: 'center', padding: '60px 24px' }}>
           <div style={{ fontSize: '3rem', marginBottom: '16px' }}>📖</div>
-          <h2 style={{ fontSize: '1.4rem', marginBottom: '8px' }}>No Generated Lessons Available Yet</h2>
+          <h2 style={{ fontSize: '1.4rem', marginBottom: '8px' }}>No Approved Lessons Available Yet</h2>
           <p style={{ color: 'var(--text-muted)', maxWidth: '500px', margin: '0 auto 24px auto' }}>
-            Generate interactive lessons & quizzes in your Parent Curriculum tab to start learning here!
+            Ask your parent to check the lessons in Curriculum. Lessons awaiting review appear here after parent approval.
           </p>
           <button className="btn btn-primary" onClick={() => navigate('/curriculum')}>
             Switch to Parent Setup →
@@ -233,7 +257,8 @@ export default function StudentDashboard() {
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '24px' }}>
           {filteredTopics.map((topic, idx) => {
-            const isLocked = !topic.is_unlocked;
+            const needsReview = topic.is_pending_review;
+            const isLocked = !needsReview && !topic.is_unlocked;
             const isMastered = topic.is_mastered;
             const isResuming = topic.has_active_session && topic.last_scene_index > 0;
             const cleanSub = (topic.subject_tag || 'maths').toLowerCase().replace(/\s+/g, '_');
@@ -260,7 +285,9 @@ export default function StudentDashboard() {
                     <span className={`badge badge-${cleanSub}`}>
                       {topic.subject_tag}
                     </span>
-                    {isMastered ? (
+                    {needsReview ? (
+                      <span className="badge badge-science">Generated · Parent review needed</span>
+                    ) : isMastered ? (
                       <span className="badge badge-status-approved">
                         🏆 Mastered
                       </span>
@@ -295,7 +322,12 @@ export default function StudentDashboard() {
                 </div>
 
                 <div>
-                  {isLocked ? (
+                  {needsReview ? (
+                    <div style={{ padding: '12px', borderRadius: 'var(--radius-sm)', background: 'rgba(165, 180, 252, 0.12)' }}>
+                      <p style={{ marginBottom: '12px' }}>Your lesson is generated. Ask your parent to review it in Curriculum before you start.</p>
+                      <button className="btn btn-secondary" style={{ width: '100%' }} disabled>Waiting for parent approval</button>
+                    </div>
+                  ) : isLocked ? (
                     <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '12px', borderRadius: 'var(--radius-sm)', textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-dim)' }}>
                       🔒 Pass the 7/10 quiz in previous topic to unlock this lesson
                     </div>

@@ -32,6 +32,7 @@ export default function Curriculum() {
   const [loadingAction, setLoadingAction] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [curriculumError, setCurriculumError] = useState('');
 
   // Chapter Accordion State
   const [expandedChapters, setExpandedChapters] = useState({ 1: true });
@@ -53,6 +54,7 @@ export default function Curriculum() {
   }, [activeChild]);
 
   const loadData = async (targetTextbookId = null) => {
+    setCurriculumError('');
     try {
       const kids = await api.getChildren();
       setChildren(kids || []);
@@ -76,18 +78,20 @@ export default function Curriculum() {
         setTopics(topList || []);
       }
     } catch (err) {
-      console.error('Error loading curriculum data:', err);
+      setCurriculumError(`Couldn't load your textbooks and chapters. ${err.message || 'Please try again.'}`);
     }
   };
 
   const handleSelectTextbook = async (tb) => {
     setSelectedTextbook(tb);
+    setTopics([]);
+    setCurriculumError('');
     try {
       const topList = await api.getTopics(tb.id);
       setTopics(topList || []);
       setExpandedChapters({ 1: true });
     } catch (err) {
-      console.error(err);
+      setCurriculumError(`Couldn't load chapters for "${tb.title}". ${err.message || 'Please try again.'}`);
     }
   };
 
@@ -213,6 +217,19 @@ export default function Curriculum() {
       const topCount = res.topics ? res.topics.length : 0;
       setStatusMessage(`Success! Organized "${res.title}" into ${chCount} Chapter(s) and ${topCount} Sub-Topics.`);
 
+      // The upload already returned its chapters. Show them immediately, even
+      // if the follow-up refresh is temporarily unavailable.
+      const uploadedBook = {
+        id: res.textbook_id,
+        title: res.title,
+        subject_tag: res.subject_tag,
+        grade: Number(grade || activeChild?.grade || 4)
+      };
+      setTextbooks((books) => [uploadedBook, ...books.filter((book) => book.id !== uploadedBook.id)]);
+      setSelectedTextbook(uploadedBook);
+      setTopics(res.topics || []);
+      setExpandedChapters(Object.fromEntries((res.chapters || []).map((chapter) => [chapter.chapter_number, true])));
+
       // Reset upload card for subsequent uploads
       resetUploadCard();
 
@@ -242,7 +259,8 @@ export default function Curriculum() {
   const handleGenerateLesson = async (topicId) => {
     try {
       setStatusMessage('Starting Agent 2 (Lesson & Revision) and Agent 3 (Quiz & Retest) in background...');
-      await api.generateLesson(topicId);
+      const generation = await api.generateLesson(topicId);
+      const generatedId = generation.topic_id;
       if (selectedTextbook) {
         const topList = await api.getTopics(selectedTextbook.id);
         setTopics(topList);
@@ -253,10 +271,10 @@ export default function Curriculum() {
         if (selectedTextbook) {
           const fresh = await api.getTopics(selectedTextbook.id);
           setTopics(fresh);
-          const t = fresh.find((item) => item.id === topicId);
+          const t = fresh.find((item) => item.id === generatedId);
           if (t && t.status !== 'generating') {
             clearInterval(interval);
-            setStatusMessage(`Lesson generated for "${t.name}"! It is now live in Child Play Mode.`);
+            setStatusMessage(`Lesson generated for "${t.name}"! It is ready for parent review.`);
           }
         }
       }, 3000);
@@ -370,6 +388,12 @@ export default function Curriculum() {
       <div style={{ maxWidth: '1000px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '32px' }}>
 
         {/* Status Alerts */}
+        {curriculumError && (
+          <div role="alert" style={{ background: '#fff', border: '3px solid #cca9ef', borderRadius: '20px', padding: '14px 20px' }}>
+            <p>{curriculumError}</p>
+            <button type="button" onClick={() => loadData(selectedTextbook?.id)}>Try loading again</button>
+          </div>
+        )}
         {statusMessage && (
           <div
             style={{
@@ -437,6 +461,7 @@ export default function Curriculum() {
             <input
               ref={fileInputRef}
               type="file"
+              aria-label="Textbook PDF"
               accept=".pdf"
               style={{ display: 'none' }}
               onChange={handleFileChange}
@@ -577,7 +602,7 @@ export default function Curriculum() {
             {showTagUI && (
               <div id="tag-ui" style={{ opacity: 1 }}>
                 <div style={{ color: '#3b2a49', fontSize: '20px', fontWeight: 800, marginBottom: '10px' }}>
-                  Upload Complete! Add a tag:
+                  PDF selected. Add a subject tag:
                 </div>
 
                 {pdfFile && (
@@ -762,7 +787,7 @@ export default function Curriculum() {
                     {selectedTextbook.title}
                   </h3>
                   <p style={{ color: '#6b7280', fontSize: '14px', fontWeight: 600, margin: 0 }}>
-                    Subject: {selectedTextbook.subject} · Grade: {selectedTextbook.grade} · {topics.length} Sub-Topics Extracted
+                    Subject: {selectedTextbook.subject_tag} · Grade: {selectedTextbook.grade} · {topics.length} Sub-Topics Extracted
                   </p>
                 </div>
 
@@ -818,6 +843,7 @@ export default function Curriculum() {
                             <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: '#ffffff' }}>
                               {ch.topics.map((t) => {
                                 const isReady = t.status === 'approved' || t.status === 'generated';
+                                const needsReview = t.status === 'needs_review';
                                 const isGenerating = t.status === 'generating';
                                 const cleanTopicName = (t.name || '').replace(/^(?:Topic\s*)?\d+(\.\d+)?[:\s\-]*/i, '');
                                 const topicDisplayTitle = `Topic ${ch.chapter_number}.${t.topic_number || 1}: ${cleanTopicName}`;
@@ -857,7 +883,7 @@ export default function Curriculum() {
                                         )}
                                         {!isReady && !isGenerating && (
                                           <span style={{ backgroundColor: '#e0e7ff', color: '#3730a3', fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px' }}>
-                                            CHUNKED
+                                            {needsReview ? 'AWAITING PARENT REVIEW' : 'CHUNKED'}
                                           </span>
                                         )}
                                       </div>
@@ -892,6 +918,12 @@ export default function Curriculum() {
 
                                     {/* Action Buttons */}
                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                      {(isReady || needsReview) && (
+                                        <button type="button" onClick={() => navigate(`/review/${t.id}`)}
+                                          style={{ background: '#45335d', color: '#fff', border: 'none', borderRadius: '9999px', padding: '8px 18px', fontWeight: 700, cursor: 'pointer' }}>
+                                          {needsReview ? 'Review Lesson' : 'View Lesson'}
+                                        </button>
+                                      )}
                                       {!isReady && !isGenerating && (
                                         <button
                                           type="button"

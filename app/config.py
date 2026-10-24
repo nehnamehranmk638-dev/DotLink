@@ -27,6 +27,7 @@ class Settings:
     GROQ_HEAVY_MODEL: str = "openai/gpt-oss-120b"
     GROQ_LIGHT_MODEL: str = "openai/gpt-oss-20b"
     GEMINI_FALLBACK_MODEL: str = "gemini-3.8-flash"
+    GEMINI_REQUEST_TIMEOUT_SECONDS: float = 60.0
 
     # Agent Tunables
     AGENT_MAX_STEPS: int = 25
@@ -64,10 +65,13 @@ class Settings:
     MINI_GAME_COOLDOWN_SECONDS: int = 300  # 5 minutes cooldown between mini-games
 
     # Inactivity & Idle Monitoring
-    IDLE_INACTIVITY_TIMEOUT_SECONDS: int = 60  # Triggers "Are you still watching?"
+    IDLE_INACTIVITY_TIMEOUT_SECONDS: int = 15  # Student check-in
     IDLE_COUNTDOWN_TIMEOUT_SECONDS: int = 30   # Auto-pause if unanswered in 30s
     HEARTBEAT_INTERVAL_SECONDS: int = 10       # Active focus heartbeat every 10s
     SSE_HEARTBEAT_INTERVAL_SECONDS: int = 15   # SSE comment heartbeat every 15s
+
+    GENERATION_CONCURRENCY: int = 2
+    REMEDIATION_SOFT_CAP_SECONDS: int = 30
 
     # Stars & Rewards Economy
     STARS_CORRECT_FIRST_TRY: int = 3

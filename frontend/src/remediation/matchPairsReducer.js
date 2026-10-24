@@ -166,7 +166,9 @@ export function matchPairsReducer(state, action) {
  * Helper to process a match attempt between leftId and rightId
  */
 function handleMatchAttempt(state, leftId, rightId, voiceLines) {
-  const isMatch = leftId === rightId;
+  const left = state.leftItems.find(item => item.id === leftId);
+  const right = state.rightItems.find(item => item.id === rightId);
+  const isMatch = left && right && left.value === right.count;
 
   if (isMatch) {
     const newMatched = [...state.matchedPairIds, leftId];
@@ -175,6 +177,7 @@ function handleMatchAttempt(state, leftId, rightId, voiceLines) {
     return {
       ...state,
       matchedPairIds: newMatched,
+      rightItems: state.rightItems.map(item => item.id === rightId ? { ...item, id: leftId } : item.id === leftId ? { ...item, id: rightId } : item),
       selectedLeftId: null,
       selectedRightId: null,
       shakingItemId: null,

@@ -1,4 +1,5 @@
 import json
+import asyncio
 import uuid
 import traceback
 from typing import List, Optional, Dict, Any
@@ -21,22 +22,48 @@ from app.services.pdf_ncert import ingest_uploaded_textbook
 from app.agents.lesson_revision_agent import run_lesson_and_revision_agent
 from app.agents.quiz_agent import run_quiz_agent
 from app.agents.loop import log_agent_step
+from app.config import settings
+from app.agents.topic_source import get_topic_pages
+from app.agents.tools import count_words
 
 router = APIRouter(tags=["curriculum"])
 
+_generation_slots = asyncio.Semaphore(settings.GENERATION_CONCURRENCY)
+
 async def background_generate_lesson_and_quizzes(topic_id: str, previous_status: str):
+    async with _generation_slots:
+        await _generate_lesson_and_quizzes(topic_id, previous_status)
+
+async def _generate_lesson_and_quizzes(topic_id: str, previous_status: str):
     """Background task executing Agent 2 and Agent 3 concurrently for minimal latency."""
     db = await get_db()
     run_id = str(uuid.uuid4())
     try:
-        # 1. Run Agent 2 (Lesson & Revision)
-        await run_lesson_and_revision_agent(topic_id, run_id, db)
+        # Independent model calls overlap; the connection serializes short DB writes.
+        results = await asyncio.gather(run_lesson_and_revision_agent(topic_id, run_id, db),
+                                       run_quiz_agent(topic_id, run_id, db), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
-        # 2. Run Agent 3 (Quiz & Retest)
-        await run_quiz_agent(topic_id, run_id, db)
+        # Check the combined lesson and mastery questions after the independent calls finish.
+        question_cursor = await db.execute("SELECT id, question_type, question_data FROM questions WHERE topic_id = ?", (topic_id,))
+        question_rows = await question_cursor.fetchall()
+        lesson_stems = {json.loads(row["question_data"])["question_text"].casefold() for row in question_rows if row["question_type"] == "in_video"}
+        duplicates = [row["id"] for row in question_rows if row["question_type"] != "in_video" and json.loads(row["question_data"])["question_text"].casefold() in lesson_stems]
+        if duplicates:
+            attempts_cursor = await db.execute("SELECT COUNT(*) as n FROM agent_steps WHERE run_id = ? AND tool_name = 'submit_quiz_sets'", (run_id,))
+            used = (await attempts_cursor.fetchone())["n"]
+            remaining = settings.QUESTION_RETRY_CAP + 1 - used
+            if (settings.GROQ_API_KEY or settings.GEMINI_API_KEY) and remaining > 0:
+                await run_quiz_agent(topic_id, run_id, db, excluded_questions=lesson_stems, max_retries=remaining - 1)
+            else:
+                await db.executemany("UPDATE questions SET flagged = 1, flag_reason = 'Duplicate of a lesson question; flag_for_parent' WHERE id = ?", [(qid,) for qid in duplicates])
 
-        # On success: set status directly to 'approved' so no manual approval is required
-        await db.execute("UPDATE topics SET status = 'approved' WHERE id = ?", (topic_id,))
+        # Preserve the initial generation flow; replacement versions use existing parent approval.
+        flag_cursor = await db.execute("SELECT COUNT(*) as n FROM questions WHERE topic_id = ? AND flagged = 1", (topic_id,))
+        needs_review = previous_status == "needs_review" or (await flag_cursor.fetchone())["n"] > 0
+        await db.execute("UPDATE topics SET status = ? WHERE id = ?", ("needs_review" if needs_review else "approved", topic_id))
         await db.commit()
     except Exception as e:
         # On failure: restore previous status and log error
@@ -196,6 +223,7 @@ async def list_topics_for_textbook(id: str, parent: dict = Depends(get_current_p
                 start_page=r["start_page"],
                 end_page=r["end_page"],
                 status=r["status"],
+                version=r["version"],
                 created_at=str(r["created_at"])
             )
             for r in rows
@@ -208,6 +236,7 @@ async def get_topic(id: str, parent: dict = Depends(get_current_parent)):
     db = await get_db()
     try:
         topic = await verify_topic_ownership(id, parent["id"], db)
+        source_text = "\n\n".join((await get_topic_pages(db, topic)).values())
         return TopicOut(
             id=topic["id"],
             textbook_id=topic["textbook_id"],
@@ -221,6 +250,7 @@ async def get_topic(id: str, parent: dict = Depends(get_current_parent)):
             start_page=topic["start_page"],
             end_page=topic["end_page"],
             status=topic["status"],
+            version=topic["version"], word_count=count_words(source_text), source_text=source_text,
             created_at=str(topic["created_at"])
         )
     finally:
@@ -236,6 +266,22 @@ async def trigger_generation(
     try:
         topic = await verify_topic_ownership(id, parent["id"], db)
         prev_status = topic["status"]
+        if prev_status == "generating":
+            return {"message": "Generation already running", "topic_id": id, "status": "generating"}
+        if prev_status == "approved":
+            in_progress = await db.execute("SELECT id FROM topics WHERE textbook_id = ? AND chapter_number = ? AND status = 'generating'", (topic["textbook_id"], topic["chapter_number"]))
+            if await in_progress.fetchone():
+                raise HTTPException(status_code=409, detail="A replacement version is already generating")
+            textbook_cursor = await db.execute("SELECT grade FROM textbooks WHERE id = ?", (topic["textbook_id"],))
+            grade = (await textbook_cursor.fetchone())["grade"]
+            rerun = await run_textbook_chunking_agent(topic["textbook_id"], grade, topic["subject_tag"], db,
+                                                     chapter_number=topic["chapter_number"])
+            for replacement in rerun["topics"]:
+                await db.execute("UPDATE topics SET status = 'generating' WHERE id = ?", (replacement["id"],))
+                background_tasks.add_task(background_generate_lesson_and_quizzes, replacement["id"], "needs_review")
+            await db.commit()
+            return {"message": "Chapter regeneration started; approved version remains live", "topic_id": rerun["topics"][0]["id"],
+                    "topic_ids": [replacement["id"] for replacement in rerun["topics"]], "status": "generating"}
 
         # Mark as generating
         await db.execute("UPDATE topics SET status = 'generating' WHERE id = ?", (id,))
@@ -437,13 +483,14 @@ async def get_topic_source_pages(id: str, parent: dict = Depends(get_current_par
             ORDER BY page_number ASC
         """, (topic["textbook_id"], topic["start_page"], topic["end_page"]))
         rows = await cursor.fetchall()
+        topic_pages = await get_topic_pages(db, topic)
         return [
             SourcePageOut(
                 id=r["id"],
                 textbook_id=r["textbook_id"],
                 topic_id=r["topic_id"],
                 page_number=r["page_number"],
-                text=r["text"]
+                text=topic_pages.get(r["page_number"], r["text"])
             )
             for r in rows
         ]

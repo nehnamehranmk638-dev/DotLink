@@ -287,6 +287,7 @@ def test_run_code_backstop():
             correct_answer="Brick patterns",
             hint_text="Look at Murshidabad patterns",
             explanation_text="Brick patterns have curved arches",
+            evidence_quote="Murshidabad brick patterns with curved arches and jali screens.",
             source_page=1
         ),
         # Source page outside topic range (topic is pages 1-2, page is 9)
@@ -312,9 +313,9 @@ def test_run_code_backstop():
     assert len(processed) == 3
     assert processed[0]["flagged"] is False
     assert processed[1]["flagged"] is True
-    assert "outside topic range" in processed[1]["flag_reason"]
+    assert "outside topic page range" in processed[1]["flag_reason"]
     assert processed[2]["flagged"] is True
-    assert "Low grounding score" in processed[2]["flag_reason"]
+    assert "evidence quote" in processed[2]["flag_reason"]
 
 # -------------------------------------------------------------------
 # New Chunking Policy & Question Scaling Validators Tests

@@ -74,7 +74,7 @@ class LLMService:
         if not self.gemini_api_key:
             raise RuntimeError("Gemini fallback triggered but GEMINI_API_KEY is not set")
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GEMINI_FALLBACK_MODEL}:generateContent?key={self.gemini_api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GEMINI_FALLBACK_MODEL}:generateContent"
         
         # Convert OpenAI-style messages & tools to Gemini format
         contents = []
@@ -125,7 +125,7 @@ class LLMService:
                 declarations.append({
                     "name": fn.get("name"),
                     "description": fn.get("description", ""),
-                    "parameters": fn.get("parameters", {})
+                    "parametersJsonSchema": fn.get("parameters", {})
                 })
             gemini_tools = [{"functionDeclarations": declarations}]
 
@@ -135,8 +135,8 @@ class LLMService:
         if gemini_tools:
             body["tools"] = gemini_tools
 
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            resp = await client.post(url, json=body)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(settings.GEMINI_REQUEST_TIMEOUT_SECONDS, connect=5.0)) as client:
+            resp = await client.post(url, json=body, headers={"x-goog-api-key": self.gemini_api_key})
             resp.raise_for_status()
             res = resp.json()
             candidate = res.get("candidates", [{}])[0]

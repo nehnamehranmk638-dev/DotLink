@@ -104,6 +104,12 @@ export const api = {
     return res.json();
   },
 
+  async getQuizQuestions(sessionId, quizSet) {
+    const response = await fetch(`${API_BASE}/sessions/${sessionId}/quiz-questions?quiz_set=${quizSet}`, { headers: getAuthHeader() });
+    if (!response.ok) throw new Error('Could not load your quiz. Please try again.');
+    return response.json();
+  },
+
   // Curriculum & Textbooks
   async uploadAndChunkTextbook(formData) {
     const res = await fetch(`${API_BASE}/curriculum/upload-textbook`, {
@@ -271,6 +277,17 @@ export const api = {
   },
 
   // Sessions & Live Adaptive Interaction
+  async getPlayTopics(childId) {
+    const res = await fetch(`${API_BASE}/play/topics/${childId}`, {
+      headers: { ...getAuthHeader() }
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Could not load lessons'));
+    }
+    return res.json();
+  },
+
   async startOrResumeSession(childId, topicId) {
     const res = await fetch(`${API_BASE}/sessions/start-or-resume`, {
       method: 'POST',
@@ -281,6 +298,33 @@ export const api = {
       const err = await res.json().catch(() => ({}));
       throw new Error(formatErrorMessage(err, 'Failed to start/resume session'));
     }
+    return res.json();
+  },
+
+  async getSessionDetails(sessionId) {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/details`, { headers: getAuthHeader() });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(formatErrorMessage(err, 'Could not load this lesson'));
+    }
+    return res.json();
+  },
+
+  async updateSessionScene(sessionId, sceneIndex) {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/update-scene`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify({ scene_index: sceneIndex })
+    });
+    if (!res.ok) throw new Error('Could not save lesson progress');
+    return res.json();
+  },
+
+  async pauseSession(sessionId, sceneIndex) {
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/pause`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
+      body: JSON.stringify({ scene_index: sceneIndex })
+    });
+    if (!res.ok) throw new Error('Could not pause this lesson');
     return res.json();
   },
 

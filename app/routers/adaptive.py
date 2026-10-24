@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from app.db import get_db
 from app.deps import get_current_parent
 from app.models.schemas import AdaptiveInteractRequest, AdaptiveInteractResponse
+from app.services.remediation import build_remediation
+from app.config import settings
 from app.services.adaptive_engine import (
     calculate_expected_time,
     validate_response_time,
@@ -87,7 +89,7 @@ async def adaptive_interact(
             # Fetch question
             cursor = await db.execute("SELECT * FROM questions WHERE id = ?", (req.question_id,))
             q = await cursor.fetchone()
-            if not q:
+            if not q or q["topic_id"] != session["topic_id"]:
                 raise HTTPException(status_code=404, detail="Question not found")
 
             q_data = json.loads(q["question_data"])
@@ -95,11 +97,22 @@ async def adaptive_interact(
             options = q_data.get("options", [])
             is_in_video = (q["question_type"] == "in_video")
 
+            # The server derives the second unsuccessful attempt from persisted history.
+            # Engagement refreshers cannot pre-empt the first-answer hint/retry.
+            await db.execute("BEGIN IMMEDIATE")
+            history_cursor = await db.execute("""
+                SELECT COUNT(*) as count,
+                       COALESCE(SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END), 0) as misses,
+                       COALESCE(MAX(pop_up_game_triggered), 0) as remediated
+                FROM attempts WHERE session_id = ? AND question_id = ?
+            """, (req.session_id, req.question_id))
+            history = await history_cursor.fetchone()
+
             # 1. Answer Ladder
             ladder_res = evaluate_answer_ladder(
                 selected_answer=req.selected_answer,
                 correct_answer=q["correct_answer"],
-                attempt_number=req.attempt_number,
+                attempt_number=history["count"] + 1,
                 hint_text=q["hint_text"],
                 explanation_text=q["explanation_text"],
                 is_in_video=is_in_video
@@ -118,6 +131,11 @@ async def adaptive_interact(
                 recent_rapid_guesses=rapid_count,
                 last_mini_game_timestamp=last_game_ts
             )
+
+            trigger_game = (not ladder_res["is_correct"] and history["misses"] == 1
+                            and not history["remediated"])
+            correct_index = next((i for i, option in enumerate(options)
+                                  if option.strip().casefold() == q["correct_answer"].strip().casefold()), None)
 
             # Update rapid guess counter
             if not ladder_res["is_correct"] and time_taken <= 1.5:
@@ -169,6 +187,10 @@ async def adaptive_interact(
 
             return AdaptiveInteractResponse(
                 status="success",
+                lesson_variant="simplified" if not ladder_res["is_correct"] or time_taken > expected_time * settings.TIME_RATIO_LOW_ENGAGEMENT else "short" if time_taken < expected_time and ladder_res["is_correct"] else "standard",
+                result="breakdown" if trigger_game else "answer",
+                remediation=build_remediation(q, q_data) if trigger_game else None,
+                highlightOptionId=f"{req.question_id}-option-{correct_index}" if trigger_game and correct_index is not None else None,
                 is_correct=ladder_res["is_correct"],
                 hint_text=ladder_res["hint_text"],
                 explanation_text=ladder_res["explanation_text"],

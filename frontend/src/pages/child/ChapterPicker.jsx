@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { animate } from 'animejs';
 import { api } from '../../api';
@@ -9,7 +9,6 @@ export default function ChapterPicker() {
   const [chapters, setChapters] = useState([]);
   const [selectedChapter, setSelectedChapter] = useState(null);
   const [loading, setLoading] = useState(true);
-  const timelineAnimRef = useRef(null);
 
   useEffect(() => {
     loadChapters();
@@ -28,48 +27,21 @@ export default function ChapterPicker() {
       const res = await api.getPlayTopics(kid.id);
       const topics = res.topics || [];
 
-      // Group topics by chapter
-      const chapterMap = new Map();
-      topics.forEach((t) => {
-        const chNum = t.chapter_number || 1;
-        if (!chapterMap.has(chNum)) {
-          chapterMap.set(chNum, {
-            id: chNum,
-            title: t.chapter_title || `Chapter ${chNum}`,
-            subject: t.subject_tag || 'Maths',
-            topics: []
-          });
-        }
-        chapterMap.get(chNum).topics.push(t);
-      });
-
-      // Calculate completion progress for each chapter
-      const parsedChapters = Array.from(chapterMap.values()).map((ch) => {
-        const total = ch.topics.length;
-        const mastered = ch.topics.filter((t) => t.is_mastered).length;
-        const progress = total > 0 ? Math.round((mastered / total) * 100) : 0;
+      const parsedChapters = (res.chapters || []).map((chapter) => {
+        const chapterTopics = topics.filter(t => t.textbook_id === chapter.textbook_id && (t.chapter_number || 1) === chapter.chapter_number);
         return {
-          ...ch,
-          progress,
-          firstTopic: ch.topics[0]
+          id: `${chapter.textbook_id}:${chapter.chapter_number}`,
+          number: chapter.chapter_number,
+          title: chapter.chapter_title || `Chapter ${chapter.chapter_number}`,
+          subject: chapter.subject_tag,
+          topics: chapterTopics,
+          progress: chapterTopics.length ? Math.round(chapterTopics.reduce((sum, t) => sum + (t.study_progress || 0), 0) / chapterTopics.length) : 0,
+          focusMinutes: Math.round(chapterTopics.reduce((sum, t) => sum + (t.focus_seconds || 0), 0) / 60),
+          firstTopic: chapterTopics.find(t => t.is_unlocked && !t.is_mastered) || chapterTopics[0]
         };
       });
-
-      // Pad up to 11 chapters if fewer to match the 11-notebook design grid
-      const fullGrid = [...parsedChapters];
-      for (let i = fullGrid.length + 1; i <= 11; i++) {
-        fullGrid.push({
-          id: i,
-          title: `Chapter ${i}`,
-          subject: 'Maths',
-          progress: Math.min(100, Math.round(i * 9)),
-          topics: [],
-          firstTopic: null
-        });
-      }
-
-      setChapters(fullGrid);
-      const initial = fullGrid[0] || null;
+      setChapters(parsedChapters);
+      const initial = parsedChapters[0] || null;
       setSelectedChapter(initial);
 
       // Trigger pop-in animation
@@ -93,30 +65,13 @@ export default function ChapterPicker() {
     }
   };
 
-  const animateTimeline = (targetProgress, chapterId) => {
+  const animateTimeline = (targetProgress) => {
     const timelineFill = document.getElementById('timeline-fill');
     const timelinePercent = document.getElementById('timeline-percent');
     if (!timelineFill || !timelinePercent) return;
 
-    const currentVal = parseInt(timelinePercent.innerText) || 0;
-
-    animate(timelineFill, {
-      width: `${targetProgress}%`,
-      duration: 800,
-      ease: 'outExpo'
-    });
-
-    animate({
-      targets: { val: currentVal },
-      val: targetProgress,
-      round: 1,
-      duration: 800,
-      ease: 'outExpo',
-      onUpdate: (anim) => {
-        const v = Math.round(anim.animations[0]?.currentValue ?? targetProgress);
-        timelinePercent.innerText = `${v}%`;
-      }
-    });
+    timelinePercent.innerText = `${targetProgress}%`;
+    animate(timelineFill, { width: `${targetProgress}%`, duration: 250, ease: 'outQuad' });
   };
 
   const handleSelectChapter = (ch) => {
@@ -124,14 +79,13 @@ export default function ChapterPicker() {
     animateTimeline(ch.progress, ch.id);
   };
 
-  const handleStartChapter = () => {
-    if (!selectedChapter) return;
-    if (selectedChapter.firstTopic) {
-      // Direct launch
-      navigate('/play');
-    } else {
-      navigate('/play');
-    }
+  const handleStartChapter = async () => {
+    const topic = selectedChapter?.firstTopic;
+    if (!topic?.is_unlocked) return;
+    try {
+      const session = await api.startOrResumeSession(activeChild.id, topic.id);
+      navigate(`/play/session/${session.session_id}`);
+    } catch (error) { console.error(error); }
   };
 
   return (
@@ -215,7 +169,7 @@ export default function ChapterPicker() {
           Choose a Chapter
         </h1>
 
-        {/* Grid for 11 Notebook Chapters */}
+        {/* One notebook per PDF chapter */}
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(85px, 1fr))',
@@ -224,12 +178,17 @@ export default function ChapterPicker() {
           width: '100%',
           maxWidth: '820px'
         }}>
+          {loading && <p>Loading your chapters…</p>}
+          {!loading && chapters.length === 0 && <p>Upload a textbook to choose a chapter.</p>}
           {chapters.map((ch) => {
             const isSelected = selectedChapter?.id === ch.id;
             return (
               <div
                 key={ch.id}
                 className="chapter-wrapper"
+                role="button" tabIndex={0}
+                aria-label={`Choose ${ch.title}`}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelectChapter(ch); } }}
                 onClick={() => handleSelectChapter(ch)}
                 style={{
                   display: 'flex',
@@ -318,8 +277,8 @@ export default function ChapterPicker() {
                   </div>
                 </div>
 
-                <span style={{ fontFamily: "'Kalam', cursive", color: '#45335d', fontWeight: 700, fontSize: '1rem', marginTop: '4px' }}>
-                  Ch {ch.id}
+                <span style={{ fontFamily: "'Kalam', cursive", color: '#45335d', fontWeight: 700, fontSize: '1rem', marginTop: '4px', maxWidth: '140px', textAlign: 'center', overflowWrap: 'anywhere' }}>
+                  {ch.title}
                 </span>
               </div>
             );
@@ -337,7 +296,7 @@ export default function ChapterPicker() {
             textAlign: 'center'
           }}>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#45335d', marginBottom: '8px' }}>
-              Chapter <span style={{ color: '#658d68' }}>{selectedChapter.id}</span> Progress ·{' '}
+              Chapter <span style={{ color: '#658d68' }}>{selectedChapter.number}</span> Progress ·{' '}
               <span style={{ fontSize: '1.05rem', color: '#7b669d' }}>{selectedChapter.title}</span>
             </h2>
 
@@ -357,7 +316,7 @@ export default function ChapterPicker() {
                   id="timeline-fill"
                   style={{
                     height: '100%',
-                    width: '0%',
+                    width: `${selectedChapter.progress}%`,
                     background: '#658d68',
                     borderRadius: '9999px',
                     position: 'relative'
@@ -365,11 +324,12 @@ export default function ChapterPicker() {
                 />
               </div>
               <span id="timeline-percent" style={{ fontSize: '0.85rem', fontWeight: 700, color: '#45335d', width: '48px', textAlign: 'right' }}>
-                0%
+                {selectedChapter.progress}%
               </span>
             </div>
 
             <p style={{ color: '#8975a6', fontSize: '0.9rem', marginTop: '6px', fontWeight: 500 }}>
+              {selectedChapter.focusMinutes} minutes studied · {selectedChapter.topics.length ? '' : 'Awaiting parent review · '}
               {selectedChapter.progress === 100
                 ? 'Completed! Great job. 🏆'
                 : selectedChapter.progress > 0
@@ -378,6 +338,7 @@ export default function ChapterPicker() {
             </p>
 
             <button
+              disabled={!selectedChapter.firstTopic?.is_unlocked}
               onClick={handleStartChapter}
               style={{
                 marginTop: '16px',

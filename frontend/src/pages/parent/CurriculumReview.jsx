@@ -182,7 +182,11 @@ export default function CurriculumReview() {
         </div>
       )}
 
-      {/* Navigation Tabs */}
+      <div className="glass-panel" style={{ padding: 20, marginBottom: 24 }}>
+        <p>Version {topic.version} · {topic.word_count ?? '—'} source words · Pages {topic.start_page}–{topic.end_page}</p>
+        {topic.source_text && <details><summary>Full topic source text</summary><p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{topic.source_text}</p></details>}
+      </div>
+            {/* Navigation Tabs */}
       <div style={{ display: 'flex', gap: '10px', marginBottom: '24px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '12px', overflowX: 'auto' }}>
         <button
           className={`btn ${activeTab === 'scenes' ? 'btn-primary' : 'btn-secondary'}`}

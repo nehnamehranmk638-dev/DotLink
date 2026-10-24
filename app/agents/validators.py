@@ -43,6 +43,13 @@ def validate_single_correct_option(question: Union[Dict[str, Any], QuizQuestion,
     if len(matches) > 1:
         return False, f"Multiple options ({len(matches)}) match correct answer '{correct_answer}'"
 
+    answer_index = get_question_field(question, "answer_index")
+    if answer_index is not None and (type(answer_index) is not int or answer_index != matches[0]):
+        return False, "answer_index must point to the single correct option"
+    correct_indices = get_question_field(question, "correct_indices")
+    if correct_indices is not None and correct_indices != matches:
+        return False, "Exactly one correct option must be designated"
+
     return True, None
 
 def validate_option_count(
@@ -93,6 +100,9 @@ def validate_question_count_for_topic(
     if q_len < min_q or q_len > max_q:
         return False, f"Question count {q_len} outside allowed bounds ({min_q}-{max_q}) for topic of {word_count} words"
 
+    expected = calculate_expected_question_count(word_count, min_q, max_q)
+    if q_len != expected:
+        return False, f"Question count {q_len}; expected {expected} for topic of {word_count} words"
     return True, None
 
 def validate_grounding_evidence(
@@ -119,13 +129,12 @@ def validate_grounding_evidence(
         return False, f"No source page text found for page {source_page}"
 
     evidence_quote = get_question_field(question, "evidence_quote")
-    q_text = get_question_field(question, "question_text", "")
-    target_match_text = evidence_quote if evidence_quote else q_text
+    target_match_text = evidence_quote
 
     if not target_match_text:
-        return False, "Question must have an evidence quote or question text for grounding"
+        return False, "Question must have an evidence quote for grounding"
 
-    score = fuzz.token_set_ratio(target_match_text, page_text)
+    score = fuzz.partial_ratio(str(target_match_text).casefold(), page_text.casefold())
     if score < threshold:
         return False, f"Evidence quote fuzzy match ({score:.1f}) is below threshold ({threshold}) on page {source_page}"
 
@@ -155,10 +164,28 @@ def recompute_arithmetic_in_options(
             expected_str = str(int(expected)) if expected == int(expected) else str(expected)
             # If the correct answer contains a number, check that it matches expected
             num_in_ans = re.findall(r'-?\d+(?:\.\d+)?', correct_ans)
+            if not num_in_ans:
+                return False, "Arithmetic question needs a numerical correct answer"
             if num_in_ans:
                 ans_val = float(num_in_ans[0])
                 if abs(ans_val - expected) > 1e-4:
                     return False, f"Arithmetic mismatch in options: calculated {a} {op} {b} = {expected_str}, but correct answer is '{correct_ans}'"
+            equivalent = 0
+            for option in get_question_field(question, "options", []):
+                text = str(option).strip()
+                expression = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*([+*/x-])\s*(-?\d+(?:\.\d+)?)", text)
+                if expression:
+                    result = calculator(float(expression[1]), expression[2], float(expression[3]))
+                    value = result.get("result")
+                elif re.fullmatch(r"-?\d+(?:\.\d+)?", text):
+                    value = float(text)
+                else:
+                    value = None
+                if value is not None and abs(value - expected) < 1e-4:
+                    equivalent += 1
+            if equivalent > 1:
+                return False, "Multiple options are arithmetically correct"
+
 
     return True, None
 
@@ -185,8 +212,10 @@ def validate_topic_chunk_policy(
     for idx, t in enumerate(topics):
         w_cnt = t.get("word_count", 0)
         t_name = t.get("name", f"Topic {idx+1}")
-        if w_cnt < settings.TOPIC_MIN_WORDS:
+        if len(topics) > 1 and w_cnt < settings.TOPIC_MIN_WORDS:
             return False, f"Topic {idx+1} ('{t_name}') has {w_cnt} words, which is below TOPIC_MIN_WORDS ({settings.TOPIC_MIN_WORDS})"
+        if w_cnt > settings.TOPIC_MAX_WORDS:
+            return False, f"Topic {idx+1} exceeds TOPIC_MAX_WORDS"
 
     return True, None
 
@@ -244,3 +273,46 @@ def validate_question_with_retry_and_flag(
         "flagged": not should_retry,
         "flag_reason": "; ".join(reasons)
     }
+
+
+def validate_topic_questions(questions, word_count, pages_map, start_page, end_page):
+    """Used inside the model submission loop, so errors cause real regeneration."""
+    errors = []
+    ok, reason = validate_question_count_for_topic(questions, word_count)
+    if not ok:
+        errors.append(reason)
+    seen = set()
+    for question in questions:
+        text = re.sub(r"\W+", " ", get_question_field(question, "question_text", "")).casefold().strip()
+        if text in seen:
+            errors.append("Duplicate question in topic")
+        seen.add(text)
+        result = validate_question_with_retry_and_flag(question, pages_map, start_page, end_page, settings.QUESTION_RETRY_CAP)
+        if not result["valid"]:
+            errors.append(result["flag_reason"])
+    difficulties = {get_question_field(q, "difficulty") for q in questions}
+    if not {"easy", "medium", "application"} <= difficulties:
+        errors.append("Include easy, medium and one application question")
+    return errors
+
+
+def validate_lesson_content(data, word_count, pages_map, start_page, end_page):
+    errors = validate_topic_questions(data.in_video_questions, word_count, pages_map, start_page, end_page)
+    import math
+    minimum = max(4, math.ceil(word_count / settings.WORDS_PER_SCENE_MAX))
+    maximum = max(4, math.ceil(word_count / settings.WORDS_PER_SCENE_MIN))
+    if not minimum <= len(data.scenes) <= maximum:
+        errors.append(f"Expected {minimum}–{maximum} complete scenes for this source")
+    scene_numbers = {scene.scene_num for scene in data.scenes}
+    for item in data.highlighted_words + data.revision_bullets + data.mini_game_config.pairs:
+        if item.source_page not in pages_map:
+            errors.append("Every generated item needs a source_page from this topic")
+    for scene in data.scenes:
+        if scene.source_page not in pages_map:
+            errors.append("Every scene needs a source_page from this topic")
+        if not scene.interaction_beat or not scene.narration_variants or not all(scene.narration_variants.get(key) for key in ("standard", "simplified", "short")):
+            errors.append("Every scene needs an interaction beat and all three narration variants")
+    for question in data.in_video_questions:
+        if question.scene_num not in scene_numbers:
+            errors.append("Question must follow a scene in this topic")
+    return errors

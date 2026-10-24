@@ -259,7 +259,7 @@ def extract_curriculum_structure(
     # Adjust end pages for chapters and topics (exclude trailing Answer Key / Appendix from last topic)
     last_page = pages_rows[-1]['page_number']
     for p in reversed(pages_rows):
-        if re.search(r'\b(answer key|answers|solutions|glossary)\b', p['text'], re.IGNORECASE):
+        if re.match(r'^\s*(?:answer key|answers|solutions|glossary)\s*[:\n]', p['text'], re.IGNORECASE):
             last_page = max(1, p['page_number'] - 1)
             break
     detected_chapters[-1]['end_page'] = max(detected_chapters[-1]['start_page'], last_page)
@@ -274,7 +274,8 @@ def extract_curriculum_structure(
                 'summary': st.get('summary', f"Exploration of {st['name']}."),
                 'start_page': st['start_page'],
                 'end_page': st['end_page'],
-                'decision_trace': st.get('decision_trace', '')
+                'decision_trace': st.get('decision_trace', ''),
+                'text': st['text'], 'word_count': st['word_count'], 'source_pages': st['source_pages']
             }
             for st in section_topics
         ]
@@ -299,7 +300,8 @@ async def run_textbook_chunking_agent(
     textbook_id: str,
     grade: int,
     subject_tag: str,
-    db
+    db,
+    chapter_number: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Executes Agent 1 (Textbook Chunking Agent):
@@ -411,40 +413,17 @@ async def run_textbook_chunking_agent(
 
     hierarchy_result = None
 
-    if settings.GROQ_API_KEY or settings.GEMINI_API_KEY:
-        try:
-            hierarchy_result = await run_agent_loop(
-                agent_name="chunking_agent",
-                run_id=run_id,
-                topic_id=None,
-                task_weight="light",
-                messages=messages,
-                tool_definitions=CHUNKING_AGENT_TOOLS,
-                tool_executor=tool_executor,
-                submit_tool_name="submit_curriculum_hierarchy",
-                submit_validator=CurriculumHierarchySubmission,
-                db=db
-            )
-        except Exception as e:
-            try:
-                await log_agent_step(
-                    db, run_id, None, "chunking_agent", 99, "fallback_chunker",
-                    {}, f"Agent notice: {str(e)[:160]}. Used verified document structure."
-                )
-            except Exception:
-                pass
-            hierarchy_result = detected_hierarchy
-    else:
-        hierarchy_result = detected_hierarchy
-
-    if hierarchy_result is None:
-        hierarchy_result = detected_hierarchy
+    hierarchy_result = detected_hierarchy
+    if chapter_number is not None:
+        hierarchy_result.chapters = [chapter for chapter in hierarchy_result.chapters if chapter.chapter_number == chapter_number]
+    if not hierarchy_result.chapters:
+        raise ValueError("Chapter not found in source text")
 
     # Log trace decision lines for each chapter in plain words
     step_ctr = 1
     for chapter in hierarchy_result.chapters:
         num_topics = len(chapter.topics)
-        decision_line = f"Chapter is long, split into {num_topics} topics" if num_topics > 1 else "Chapter is short, kept as one topic"
+        decision_line = chapter.topics[0].decision_trace
         try:
             await log_agent_step(
                 db, run_id, None, "chunking_agent", step_ctr, "split_sections",
@@ -468,12 +447,12 @@ async def run_textbook_chunking_agent(
 
     if has_approved:
         # Keep existing approved content untouched! Delete only unapproved drafts of this textbook.
-        await db.execute("DELETE FROM topics WHERE textbook_id = ? AND status != 'approved'", (textbook_id,))
+        await db.execute("DELETE FROM topics WHERE textbook_id = ? AND status != 'approved' AND (? IS NULL OR chapter_number = ?)", (textbook_id, chapter_number, chapter_number))
         topic_version = current_max_v + 1
         initial_status = 'needs_review'
     else:
         # Clean unapproved draft topics for this textbook
-        await db.execute("DELETE FROM topics WHERE textbook_id = ?", (textbook_id,))
+        await db.execute("DELETE FROM topics WHERE textbook_id = ? AND (? IS NULL OR chapter_number = ?)", (textbook_id, chapter_number, chapter_number))
         topic_version = 1
         initial_status = 'chunked'
 
@@ -494,11 +473,10 @@ async def run_textbook_chunking_agent(
                 topic_item.start_page, topic_item.end_page, initial_status, topic_version
             ))
 
-            # Associate source pages in this range with the topic
-            await db.execute("""
-                UPDATE source_pages SET topic_id = ?
-                WHERE textbook_id = ? AND page_number BETWEEN ? AND ?
-            """, (top_id, textbook_id, topic_item.start_page, topic_item.end_page))
+            # Snapshot exact topic fragments in existing JSON; approved source links stay untouched.
+            await log_agent_step(db, run_id, top_id, "chunking_agent", step_ctr, "topic_source",
+                                 {"pages": topic_item.source_pages, "text": topic_item.text,
+                                  "word_count": topic_item.word_count}, topic_item.decision_trace)
 
             created_topics.append({
                 "id": top_id,
@@ -513,7 +491,7 @@ async def run_textbook_chunking_agent(
                 "start_page": topic_item.start_page,
                 "end_page": topic_item.end_page,
                 "status": initial_status,
-                "version": topic_version
+                "version": topic_version, "word_count": topic_item.word_count, "text": topic_item.text
             })
 
     await db.commit()

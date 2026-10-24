@@ -35,6 +35,7 @@ async def run_agent_loop(
     db,
     max_steps: int = settings.AGENT_MAX_STEPS,
     max_retries: int = settings.AGENT_MAX_RETRIES,
+    content_validator: Optional[Callable] = None,
 ) -> BaseModel:
     """
     Shared ~60-line autonomous tool-calling loop.
@@ -67,14 +68,23 @@ async def run_agent_loop(
             if name == submit_tool_name:
                 try:
                     validated = submit_validator.model_validate(args)
+                    if content_validator:
+                        errors = content_validator(validated)
+                        if errors:
+                            raise ValueError("; ".join(errors))
                     await log_agent_step(db, run_id, topic_id, agent_name, step_num, name, args, "Validation Passed")
                     return validated
-                except ValidationError as e:
+                except (ValidationError, ValueError) as e:
                     retry_count += 1
                     err_msg = f"Validation Error in {submit_tool_name}: {str(e)}"
                     await log_agent_step(db, run_id, topic_id, agent_name, step_num, name, args, err_msg)
                     if retry_count > max_retries:
-                        raise RuntimeError(f"Agent {agent_name} failed submit validation after {max_retries} retries: {err_msg}")
+                        failure = RuntimeError(f"flag_for_parent: Agent {agent_name} failed submit validation after {max_retries} retries: {err_msg}")
+                        try:
+                            failure.payload = submit_validator.model_validate(args)
+                        except ValidationError:
+                            failure.payload = None
+                        raise failure
                     messages.append({
                         "role": "tool",
                         "tool_call_id": call_id,

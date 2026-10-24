@@ -4,7 +4,7 @@
 class SoundFX {
   constructor() {
     this.ctx = null;
-    this.muted = false;
+    this.muted = typeof localStorage === 'undefined' || localStorage.getItem('dotlink_sound') !== 'true';
   }
 
   init() {
@@ -21,6 +21,7 @@ class SoundFX {
 
   toggleMute() {
     this.muted = !this.muted;
+    localStorage.setItem('dotlink_sound', String(!this.muted));
     return this.muted;
   }
 

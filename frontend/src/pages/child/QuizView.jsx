@@ -1,162 +1,89 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
+import { useRemediationFlow } from '../../remediation';
+import StudentInactivity from '../../components/StudentInactivity';
 
 export default function QuizView() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
-
-  const [quizSet, setQuizSet] = useState('quiz_a'); // 'quiz_a' | 'quiz_b'
-  const [questions, setQuestions] = useState([]);
-  const [currentIdx, setCurrentIdx] = useState(0);
-  const [answersLog, setAnswersLog] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  // Anti-Rushing Button Lock
-  const [buttonLocked, setButtonLocked] = useState(true);
+  const [quizSet, setQuizSet] = useState('quiz_a');
+  const [questions, setQuestions] = useState([]), [currentIdx, setCurrentIdx] = useState(0);
+  const [answersLog, setAnswersLog] = useState([]), [loading, setLoading] = useState(true);
   const [lockCountdown, setLockCountdown] = useState(3);
-  const [lockExpiryTimestamp, setLockExpiryTimestamp] = useState(null);
-
-  // Current Question State
-  const [selectedAnswer, setSelectedAnswer] = useState(null);
-  const [attemptNumber, setAttemptNumber] = useState(1);
-  const [hintText, setHintText] = useState(null);
-  const [explanationText, setExplanationText] = useState(null);
-  const [evaluationFeedback, setEvaluationFeedback] = useState(null);
-
-  // Result & Mastery Gate State
-  const [quizResult, setQuizResult] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
-
+  const [selectedAnswer, setSelectedAnswer] = useState(null), [attemptNumber, setAttemptNumber] = useState(1);
+  const [hintText, setHintText] = useState(null), [explanationText, setExplanationText] = useState(null);
+  const [evaluationFeedback, setEvaluationFeedback] = useState(null), [quizResult, setQuizResult] = useState(null);
+  const [submitting, setSubmitting] = useState(false), [answerPending, setAnswerPending] = useState(false);
+  const [idlePaused, setIdlePaused] = useState(false), [error, setError] = useState('');
+  const requestInFlight = useRef(false), clock = useRef(0), practice = useRef(null), nextTimer = useRef(null);
+  const flow = useRemediationFlow({ reduceMotion: localStorage.getItem('dotlink_reduce_motion') === 'true', soundEnabled: localStorage.getItem('dotlink_sound') === 'true' });
+  const paused = flow.isRemediating || idlePaused || answerPending;
+  const buttonLocked = lockCountdown > 0 || paused || evaluationFeedback === 'correct' || !!explanationText;
   useEffect(() => {
-    loadQuiz(quizSet);
+    let cancelled = false;
+    setLoading(true); setQuizResult(null); setCurrentIdx(0); setAnswersLog([]); setError('');
+    api.getQuizQuestions(sessionId, quizSet).then(list => {
+      if (!cancelled) { setQuestions(list); setLockCountdown(3); clock.current = 0; }
+    }).catch(err => { if (!cancelled) setError(err.message); }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; clearTimeout(nextTimer.current); };
   }, [sessionId, quizSet]);
-
-  const loadQuiz = async (set) => {
-    setLoading(true);
-    setQuizResult(null);
-    setCurrentIdx(0);
-    setAnswersLog([]);
-    try {
-      const token = localStorage.getItem('dotlink_token');
-      const res = await fetch(`http://localhost:8000/sessions/${sessionId}/quiz-questions?quiz_set=${set}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const qList = await res.json();
-      setQuestions(qList);
-      if (qList.length > 0) {
-        startQuestionLock(3);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startQuestionLock = (seconds) => {
-    setButtonLocked(true);
-    setLockCountdown(seconds);
+  useEffect(() => {
+    if (paused || loading || quizResult || evaluationFeedback === 'correct' || explanationText) return;
+    let last = performance.now();
     const timer = setInterval(() => {
-      setLockCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          setButtonLocked(false);
-          setLockExpiryTimestamp(Date.now());
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-
-  const handleSelectOption = (opt) => {
-    if (buttonLocked) return;
-    const currentQ = questions[currentIdx];
-    setSelectedAnswer(opt);
-
-    const isCorrect = (opt.trim().toLowerCase() === currentQ.correct_answer.trim().toLowerCase());
-
-    if (isCorrect) {
-      setEvaluationFeedback('correct');
-      // Record answer
-      const logItem = {
-        question_id: currentQ.id,
-        selected_answer: opt,
-        is_first_try_correct: (attemptNumber === 1)
-      };
-      const updatedLog = [...answersLog, logItem];
-      setAnswersLog(updatedLog);
-
-      setTimeout(() => {
-        moveToNextQuestion(updatedLog);
-      }, 1200);
-    } else {
-      if (attemptNumber === 1) {
-        setEvaluationFeedback('wrong_first');
-        setHintText(currentQ.hint_text);
-        setAttemptNumber(2);
-        // 2s lock on retry
-        startQuestionLock(2);
-      } else {
-        setEvaluationFeedback('wrong_second');
-        setExplanationText(currentQ.explanation_text);
-        // Record as wrong
-        const logItem = {
-          question_id: currentQ.id,
-          selected_answer: opt,
-          is_first_try_correct: false
-        };
-        const updatedLog = [...answersLog, logItem];
-        setAnswersLog(updatedLog);
-
-        setTimeout(() => {
-          moveToNextQuestion(updatedLog);
-        }, 3000);
-      }
-    }
-  };
-
-  const moveToNextQuestion = (currentLog) => {
-    setSelectedAnswer(null);
-    setAttemptNumber(1);
-    setHintText(null);
-    setExplanationText(null);
-    setEvaluationFeedback(null);
-
-    const nextIdx = currentIdx + 1;
-    if (nextIdx < questions.length) {
-      setCurrentIdx(nextIdx);
-      startQuestionLock(3);
-    } else {
-      submitCompleteQuiz(currentLog);
-    }
-  };
-
-  const submitCompleteQuiz = async (finalAnswers) => {
+      const now = performance.now(), elapsed = (now - last) / 1000; last = now;
+      if (lockCountdown > 0) setLockCountdown(value => Math.max(0, value - elapsed));
+      else clock.current += elapsed;
+    }, 100);
+    return () => clearInterval(timer);
+  }, [paused, loading, quizResult, lockCountdown, evaluationFeedback, explanationText]);
+  useEffect(() => {
+    if (paused || loading || quizResult || submitting) return;
+    const timer = setInterval(() => api.postHeartbeat(sessionId).catch(() => {}), 10000);
+    return () => clearInterval(timer);
+  }, [paused, loading, quizResult, submitting, sessionId]);
+  const submitCompleteQuiz = async finalAnswers => {
     setSubmitting(true);
-    try {
-      const res = await api.submitQuiz(sessionId, {
-        quiz_set: quizSet,
-        answers: finalAnswers
-      });
-      setQuizResult(res);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setSubmitting(false);
-    }
+    try { setQuizResult(await api.submitQuiz(sessionId, { quiz_set: quizSet, answers: finalAnswers })); }
+    catch (err) { setError(err.message); }
+    finally { setSubmitting(false); }
   };
-
+  const moveToNextQuestion = log => {
+    setSelectedAnswer(null); setAttemptNumber(1); setHintText(null); setExplanationText(null); setEvaluationFeedback(null);
+    practice.current = null; clock.current = 0;
+    if (currentIdx + 1 < questions.length) { setCurrentIdx(currentIdx + 1); setLockCountdown(3); }
+    else submitCompleteQuiz(log);
+  };
+  const handleSelectOption = async option => {
+    if (buttonLocked || requestInFlight.current) return;
+    const question = questions[currentIdx];
+    setSelectedAnswer(option);
+    // The extra attempt is ungraded practice. Original attempt records and mastery score stay unchanged.
+    if (practice.current) {
+      setExplanationText(practice.current.explanation_text || question.explanation_text);
+      setEvaluationFeedback('explained'); practice.current = null; return;
+    }
+    requestInFlight.current = true; setAnswerPending(true); setError('');
+    try {
+      const response = await api.adaptiveInteract({ session_id: sessionId, interaction_type: 'answer_submit',
+        question_id: question.id, selected_answer: option, attempt_number: attemptNumber, time_taken: Math.min(300, Math.max(.1, clock.current)) });
+      if (response.can_retry) {
+        setHintText(response.hint_text); setAttemptNumber(2); setEvaluationFeedback('hint'); setLockCountdown(2); clock.current = 0;
+      } else {
+        const log = [...answersLog, { question_id: question.id, selected_answer: option, is_first_try_correct: attemptNumber === 1 && response.is_correct }];
+        setAnswersLog(log);
+        if (flow.triggerRemediation(response, () => {
+          practice.current = response; setSelectedAnswer(null); setHintText(null); setEvaluationFeedback('practice'); setLockCountdown(2); clock.current = 0;
+        }, { sessionId, quizSet, questionId: question.id })) { setEvaluationFeedback('remediation'); return; }
+        if (response.is_correct) { setEvaluationFeedback('correct'); nextTimer.current = setTimeout(() => moveToNextQuestion(log), 1400); }
+        else { setExplanationText(response.explanation_text); setEvaluationFeedback('explained'); }
+      }
+    } catch (err) { setError(err.message); }
+    finally { requestInFlight.current = false; setAnswerPending(false); }
+  };
   const currentQ = questions[currentIdx];
-
-  if (loading) {
-    return (
-      <div style={{ maxWidth: '800px', margin: '40px auto', padding: '24px', textAlign: 'center' }}>
-        <p style={{ color: 'var(--text-muted)' }}>Preparing 10-Question Mastery Quiz...</p>
-      </div>
-    );
-  }
+  if (loading) return <p style={{ padding: 32 }}>Preparing your quiz…</p>;
 
   // -------------------------------------------------------------
   // Result View (Mastery Gate >= 7 Pass vs < 7 Full Revision + Retest)
@@ -281,6 +208,15 @@ export default function QuizView() {
   // -------------------------------------------------------------
   return (
     <div style={{ maxWidth: '800px', margin: '24px auto', padding: '20px' }}>
+      {flow.remediationPopup}
+      <StudentInactivity paused={flow.isRemediating || !!quizResult || submitting || loading}
+        onPause={() => setIdlePaused(true)}
+        onResume={() => { setIdlePaused(false); api.postIdle(sessionId, { responded: true }).catch(() => {}); }}
+        onAutoPause={() => { api.postIdle(sessionId, { responded: false }).catch(() => {}); navigate('/play'); }} />
+      {error && <p role="alert">{error}</p>}
+      <div inert={flow.isRemediating || idlePaused ? true : undefined}>
+      {evaluationFeedback === 'correct' && <p role="status" style={{ fontSize: 24 }}>🎉 Nice work! You’ve got it!</p>}
+      {evaluationFeedback === 'practice' && <p role="status">Let’s try the same question with our new steps.</p>}
       {/* Top Progress Bar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <button className="btn btn-secondary" style={{ padding: '6px 14px' }} onClick={() => navigate('/play')}>
@@ -321,7 +257,7 @@ export default function QuizView() {
             <span className="badge badge-science">Question {currentIdx + 1}</span>
             {buttonLocked && (
               <span className="badge badge-warning" style={{ background: '#f59e0b', color: '#111827' }}>
-                ⏳ Please read: Buttons unlock in {lockCountdown}s
+                ⏳ Please read: Take a moment to read
               </span>
             )}
           </div>
@@ -346,7 +282,8 @@ export default function QuizView() {
             {currentQ.options.map((opt, idx) => (
               <button
                 key={idx}
-                className="btn btn-secondary"
+                id={`${currentQ.id}-option-${idx}`}
+                className={`btn btn-secondary quiz-option ${flow.highlightedId === `${currentQ.id}-option-${idx}` ? 'aha-glow' : ''}`}
                 disabled={buttonLocked}
                 style={{
                   justifyContent: 'flex-start',
@@ -356,10 +293,10 @@ export default function QuizView() {
                   background: selectedAnswer === opt
                     ? evaluationFeedback === 'correct'
                       ? 'rgba(16, 185, 129, 0.3)'
-                      : 'rgba(239, 68, 68, 0.3)'
+                      : 'rgba(164, 183, 134, 0.2)'
                     : 'rgba(15, 23, 42, 0.6)',
                   borderColor: selectedAnswer === opt
-                    ? evaluationFeedback === 'correct' ? '#10b981' : '#ef4444'
+                    ? evaluationFeedback === 'correct' ? '#10b981' : '#a4b786'
                     : 'var(--border-subtle)'
                 }}
                 onClick={() => handleSelectOption(opt)}
@@ -373,6 +310,8 @@ export default function QuizView() {
           </div>
         </div>
       )}
+      {explanationText && <button className="btn btn-primary" style={{ minHeight: 56, marginTop: 24 }} onClick={() => moveToNextQuestion(answersLog)}>Continue →</button>}
+      </div>
     </div>
   );
 }

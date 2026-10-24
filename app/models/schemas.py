@@ -80,6 +80,8 @@ class TopicOut(BaseModel):
     end_page: int
     status: str
     version: Optional[int] = 1
+    word_count: Optional[int] = None
+    source_text: Optional[str] = None
     created_at: str
 
 class SourcePageOut(BaseModel):
@@ -99,6 +101,10 @@ class SubTopicChunk(BaseModel):
     summary: str = Field(..., description="1-sentence overview of what this sub-topic covers")
     start_page: int = Field(..., ge=1)
     end_page: int = Field(..., ge=1)
+    text: str = ""
+    word_count: int = 0
+    source_pages: List[Dict[str, Any]] = Field(default_factory=list)
+    decision_trace: str = ""
 
     @model_validator(mode="after")
     def validate_page_order(self):
@@ -148,11 +154,13 @@ class AnimatedScene(BaseModel):
     narration_text: str = Field(..., min_length=10)
     narration_variants: Optional[Dict[str, str]] = None
     interaction_beat: Optional[str] = None
+    source_page: Optional[int] = None
 
 class HighlightedWord(BaseModel):
     word: str = Field(..., min_length=1)
     key_point: str = Field(..., min_length=3)
     scene_num: int = Field(..., ge=1)
+    source_page: Optional[int] = None
 
 class InVideoQuestion(BaseModel):
     scene_num: int = Field(..., ge=1)
@@ -175,16 +183,18 @@ class RevisionBullet(BaseModel):
     bullet_num: int = Field(..., ge=1)
     scene_num: int = Field(..., ge=1)
     text: str = Field(..., min_length=5)
+    source_page: Optional[int] = None
 
 class WordNumberPair(BaseModel):
     left: str = Field(..., min_length=1)
     right: str = Field(..., min_length=1)
+    source_page: Optional[int] = None
 
 class MiniGameConfig(BaseModel):
     pairs: List[WordNumberPair] = Field(..., min_length=6, max_length=8)
 
 class SubmitLessonAndRevisionPayload(BaseModel):
-    scenes: List[AnimatedScene] = Field(..., min_length=4, max_length=16)
+    scenes: List[AnimatedScene] = Field(..., min_length=4)
     highlighted_words: List[HighlightedWord] = Field(..., min_length=1)
     in_video_questions: List[InVideoQuestion] = Field(..., min_length=1, max_length=16)
     revision_bullets: List[RevisionBullet] = Field(..., min_length=1)
@@ -289,6 +299,10 @@ class AdaptiveInteractRequest(BaseModel):
 
 class AdaptiveInteractResponse(BaseModel):
     status: str
+    lesson_variant: str = "standard"
+    result: Optional[str] = None
+    remediation: Optional[Dict[str, Any]] = None
+    highlightOptionId: Optional[str] = None
     is_correct: Optional[bool] = None
     hint_text: Optional[str] = None
     explanation_text: Optional[str] = None

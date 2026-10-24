@@ -90,12 +90,12 @@ async def calculate_parent_analytics(child_id: str, db) -> Dict[str, Any]:
 
     # Weekly aggregates
     non_zero_s_acc = [x for x in daily_silent_acc if x > 0]
-    weekly_avg_accuracy = round(sum(non_zero_s_acc) / len(non_zero_s_acc), 1) if non_zero_s_acc else 78.5
+    weekly_avg_accuracy = round(sum(non_zero_s_acc) / len(non_zero_s_acc), 1) if non_zero_s_acc else 0.0
     weekly_total_time_mins = round(sum(daily_time_focused_mins), 1)
     non_zero_att = [x for x in daily_attention if x > 0]
-    weekly_avg_attention = round(sum(non_zero_att) / len(non_zero_att), 1) if non_zero_att else 14.5
+    weekly_avg_attention = round(sum(non_zero_att) / len(non_zero_att), 1) if non_zero_att else 0.0
     non_zero_spd = [x for x in daily_speed_secs if x > 0]
-    weekly_avg_speed = round(sum(non_zero_spd) / len(non_zero_spd), 1) if non_zero_spd else 4.2
+    weekly_avg_speed = round(sum(non_zero_spd) / len(non_zero_spd), 1) if non_zero_spd else 0.0
 
     # Chart.js Ready Structures
     accuracy_chart = {
@@ -163,33 +163,39 @@ async def calculate_parent_analytics(child_id: str, db) -> Dict[str, Any]:
     child_name = c_row["name"] if c_row else "Your student"
 
     # Attentivity Line Chart calculation
-    # Normalize daily attention into 30% - 95% scale for visually clear child graph
-    att_max = max(daily_attention) if daily_attention and max(daily_attention) > 0 else 1.0
+    has_activity = any(att > 0 for att in daily_attention)
+    att_max = max(daily_attention) if has_activity else 1.0
     normalized_att_vals = []
     for att in daily_attention:
         if att > 0:
-            val = round(40 + (att / att_max) * 55)
+            val = round(30 + (att / att_max) * 65)
         else:
-            val = 45
+            val = 0
         normalized_att_vals.append(min(val, 98))
 
-    # Identify peak focus day
-    peak_val = max(normalized_att_vals) if normalized_att_vals else 85
-    peak_idx = normalized_att_vals.index(peak_val) if normalized_att_vals else 2
     short_day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    peak_day_name = short_day_names[peak_idx]
+    if has_activity:
+        peak_val = max(normalized_att_vals)
+        peak_idx = normalized_att_vals.index(peak_val)
+        peak_day_name = short_day_names[peak_idx]
+    else:
+        peak_val = 0
+        peak_idx = 0
+        peak_day_name = short_day_names[0]
 
     # Map 7 points to SVG 500x200 canvas
-    # x goes from 30 to 470, y goes from 160 (0%) to 30 (100%)
+    # x goes from 30 to 470, y goes from 170 (0%) to 30 (100%)
     pts = []
     for i, v in enumerate(normalized_att_vals):
         x = int(30 + (i * (440 / 6)))
-        y = int(170 - (v / 100) * 140)
+        y = int(170 - (v / 100) * 140) if v > 0 else 170
         pts.append((x, y))
 
-    # Build SVG cubic curve path
-    peak_pt = pts[peak_idx]
-    svg_d = f"M{pts[0][0]},{pts[0][1]} " + " ".join([f"S{(p[0]+pts[max(0,i-1)][0])//2},{p[1]} {p[0]},{p[1]}" for i, p in enumerate(pts[1:], 1)])
+    peak_pt = pts[peak_idx] if has_activity else (250, 170)
+    if has_activity:
+        svg_d = f"M{pts[0][0]},{pts[0][1]} " + " ".join([f"S{(p[0]+pts[max(0,i-1)][0])//2},{p[1]} {p[0]},{p[1]}" for i, p in enumerate(pts[1:], 1)])
+    else:
+        svg_d = f"M{pts[0][0]},170 " + " ".join([f"L{p[0]},170" for p in pts[1:]])
 
     # Real question counts for Accuracy donut
     acc_cur = await db.execute("""
@@ -205,14 +211,45 @@ async def calculate_parent_analytics(child_id: str, db) -> Dict[str, Any]:
     db_wrong = acc_row["wrong_cnt"] if acc_row and acc_row["wrong_cnt"] else 0
     
     total_qs = db_correct + db_wrong
-    if total_qs >= 5:
+    if total_qs > 0:
         acc_pct = round((db_correct / total_qs) * 100)
         final_correct_cnt = db_correct
         final_wrong_cnt = db_wrong
     else:
-        acc_pct = int(weekly_avg_accuracy) if weekly_avg_accuracy > 0 else 85
-        final_correct_cnt = 340 + (db_correct * 10)
-        final_wrong_cnt = 60 + (db_wrong * 5)
+        acc_pct = 0
+        final_correct_cnt = 0
+        final_wrong_cnt = 0
+
+    # Also compute today's specific question counts
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    today_cur = await db.execute("""
+        SELECT 
+            SUM(CASE WHEN is_correct = 1 THEN 1 ELSE 0 END) as correct_cnt,
+            SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) as wrong_cnt
+        FROM attempts a
+        JOIN sessions s ON a.session_id = s.id
+        WHERE s.child_id = ? AND date(a.created_at) = ?
+    """, (child_id, today_str))
+    today_row = await today_cur.fetchone()
+    today_correct = today_row["correct_cnt"] if today_row and today_row["correct_cnt"] else 0
+    today_wrong = today_row["wrong_cnt"] if today_row and today_row["wrong_cnt"] else 0
+    today_total = today_correct + today_wrong
+    today_acc_pct = round((today_correct / today_total) * 100) if today_total > 0 else 0
+
+    # Generate truthful analysis text for daily and weekly
+    if today_total > 0:
+        daily_analysis = f"{child_name} answered {today_total} questions today with a solid {today_acc_pct}% accuracy rate."
+    elif has_activity:
+        daily_analysis = f"{child_name} spent time focused on lessons today. Answer questions to view accuracy!"
+    else:
+        daily_analysis = f"{child_name} hasn't completed any learning activities yet today. Start a lesson to track daily focus and accuracy stats!"
+
+    if total_qs > 0:
+        weekly_analysis = f"{child_name} answered {total_qs} questions this week with a solid {acc_pct}% accuracy rate."
+    elif has_activity:
+        weekly_analysis = f"{child_name} maintained consistent focus across learning sessions this week."
+    else:
+        weekly_analysis = f"{child_name} hasn't completed any learning activities yet this week. Start a lesson to track focus and accuracy stats!"
 
     # Subject engagement breakdown from database
     sub_cur = await db.execute("""
@@ -226,26 +263,56 @@ async def calculate_parent_analytics(child_id: str, db) -> Dict[str, Any]:
     sub_map = {r["subject_tag"]: r["days_active"] for r in sub_rows}
 
     default_subs = [
-        {"subject": "Math", "days": max(float(sub_map.get("Maths", sub_map.get("Math", 0))), 2.5), "max": 5.0, "color": "#116a4e"},
-        {"subject": "Sci", "days": max(float(sub_map.get("Science", sub_map.get("EVS", 0))), 4.0), "max": 5.0, "color": "#14b02b"},
-        {"subject": "Eng", "days": max(float(sub_map.get("English", 0)), 2.0), "max": 5.0, "color": "#75c96b"},
-        {"subject": "Hist", "days": max(float(sub_map.get("Social Studies", 0)), 4.5), "max": 5.0, "color": "#f7385f"},
-        {"subject": "Art", "days": 1.5, "max": 5.0, "color": "#ff85a1"},
-        {"subject": "P.E.", "days": 3.5, "max": 5.0, "color": "#4267f5"},
-        {"subject": "Music", "days": 1.0, "max": 5.0, "color": "#9b51e0"}
+        {"subject": "Math", "days": float(sub_map.get("Maths", sub_map.get("Math", 0))), "max": 5.0, "color": "#116a4e"},
+        {"subject": "Sci", "days": float(sub_map.get("Science", sub_map.get("EVS", 0))), "max": 5.0, "color": "#14b02b"},
+        {"subject": "Eng", "days": float(sub_map.get("English", 0)), "max": 5.0, "color": "#75c96b"},
+        {"subject": "Hist", "days": float(sub_map.get("Social Studies", 0)), "max": 5.0, "color": "#f7385f"},
+        {"subject": "Art", "days": 0.0, "max": 5.0, "color": "#ff85a1"},
+        {"subject": "P.E.", "days": 0.0, "max": 5.0, "color": "#4267f5"},
+        {"subject": "Music", "days": 0.0, "max": 5.0, "color": "#9b51e0"}
     ]
-    # Ensure sane non-zero display days
     for s in default_subs:
-        if s["days"] == 0:
-            s["days"] = 2.0
         s["percent"] = int(min(100, (s["days"] / s["max"]) * 100))
+
+    # Compute today's active time
+    today_s_cur = await db.execute("""
+        SELECT active_focus_seconds FROM sessions
+        WHERE child_id = ? AND date(started_at) = ?
+    """, (child_id, today_str))
+    today_sessions = await today_s_cur.fetchall()
+    today_tot_secs = sum(s["active_focus_seconds"] for s in today_sessions)
+    today_has_activity = today_tot_secs > 0
+
+    daily_learner_snapshot = {
+        "child_name": child_name,
+        "has_activity": today_has_activity,
+        "analysis_text": daily_analysis,
+        "attentivity": {
+            "days": short_day_names,
+            "values": normalized_att_vals if today_has_activity else [0]*7,
+            "has_activity": today_has_activity,
+            "peak_day": peak_day_name if today_has_activity else short_day_names[-1],
+            "peak_pct": peak_val if today_has_activity else 0,
+            "peak_cx": peak_pt[0] if today_has_activity else 250,
+            "peak_cy": peak_pt[1] if today_has_activity else 170,
+            "svg_path": svg_d if today_has_activity else f"M{pts[0][0]},170 " + " ".join([f"L{p[0]},170" for p in pts[1:]])
+        },
+        "accuracy": {
+            "percentage": today_acc_pct if today_total > 0 else 0,
+            "correct_count": today_correct if today_total > 0 else 0,
+            "wrong_count": today_wrong if today_total > 0 else 0,
+            "stroke_dashoffset": round(628.31 * (1 - (today_acc_pct / 100)), 2) if (today_total > 0 and today_acc_pct > 0) else 628.31
+        }
+    }
 
     weekly_learner_snapshot = {
         "child_name": child_name,
-        "analysis_text": f"{child_name} maintained consistent focus throughout the week, peaking mid-week on {peak_day_name}. They achieved a solid {acc_pct}% weekly accuracy rate.",
+        "has_activity": has_activity,
+        "analysis_text": weekly_analysis,
         "attentivity": {
             "days": short_day_names,
             "values": normalized_att_vals,
+            "has_activity": has_activity,
             "peak_day": peak_day_name,
             "peak_pct": peak_val,
             "peak_cx": peak_pt[0],
@@ -253,16 +320,16 @@ async def calculate_parent_analytics(child_id: str, db) -> Dict[str, Any]:
             "svg_path": svg_d
         },
         "accuracy": {
-            "percentage": acc_pct,
-            "correct_count": final_correct_cnt,
-            "wrong_count": final_wrong_cnt,
-            "stroke_dashoffset": round(628.31 * (1 - (acc_pct / 100)), 2)
+            "percentage": acc_pct if total_qs > 0 else 0,
+            "correct_count": final_correct_cnt if total_qs > 0 else 0,
+            "wrong_count": final_wrong_cnt if total_qs > 0 else 0,
+            "stroke_dashoffset": round(628.31 * (1 - (acc_pct / 100)), 2) if (total_qs > 0 and acc_pct > 0) else 628.31
         },
         "days_by_subject": default_subs,
         "subject_highlights": [
-            {"subject": "History", "text": "Longest duration spent reviewing", "days": "4.5 Days", "color": "#f7385f"},
-            {"subject": "Science", "text": "Consistent daily modules", "days": "4.0 Days", "color": "#14b02b"},
-            {"subject": "Music", "text": "Short practice sessions", "days": "1.0 Days", "color": "#9b51e0"}
+            {"subject": "History", "text": "Review topics", "days": f"{default_subs[3]['days']} Days", "color": "#f7385f"},
+            {"subject": "Science", "text": "Science modules", "days": f"{default_subs[1]['days']} Days", "color": "#14b02b"},
+            {"subject": "Math", "text": "Practice exercises", "days": f"{default_subs[0]['days']} Days", "color": "#116a4e"}
         ]
     }
 
@@ -279,5 +346,6 @@ async def calculate_parent_analytics(child_id: str, db) -> Dict[str, Any]:
             "time_focused": time_focused_chart,
             "speed": speed_chart
         },
+        "daily_learner_snapshot": daily_learner_snapshot,
         "weekly_learner_snapshot": weekly_learner_snapshot
     }

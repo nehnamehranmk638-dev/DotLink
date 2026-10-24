@@ -135,8 +135,18 @@ async def test_upload_and_hierarchical_chunking_success():
 
         # Verify listing topics for this textbook
         textbook_id = data["textbook_id"]
+        res_books = await client.get("/textbooks", headers=headers)
+        assert res_books.status_code == 200
+        uploaded_book = next(book for book in res_books.json() if book["id"] == textbook_id)
+        assert uploaded_book["title"] == "Science Discoveries Grade 4"
+        assert uploaded_book["page_count"] == 4
+
         res_topics = await client.get(f"/textbooks/{textbook_id}/topics", headers=headers)
         assert res_topics.status_code == 200
         topics_list = res_topics.json()
         assert len(topics_list) == len(data["topics"])
         assert topics_list[0]["subject_tag"] == "Science"
+
+        trace = await client.get(f"/topics/{topics_list[0]['id']}/agent-steps", headers=headers)
+        assert trace.status_code == 200
+        assert trace.json()

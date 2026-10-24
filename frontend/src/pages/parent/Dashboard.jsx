@@ -11,7 +11,7 @@ import {
   Tooltip,
   Legend
 } from 'chart.js';
-import { Line, Bar } from 'react-chartjs-2';
+import { Line } from 'react-chartjs-2';
 import { api } from '../../api';
 
 ChartJS.register(
@@ -357,18 +357,6 @@ export default function Dashboard() {
           </div>
 
           <div
-            className={`glass-panel ${selectedMetric === 'time_focused' ? 'glass-panel-elevated' : ''}`}
-            style={{ padding: '20px', cursor: 'pointer', border: selectedMetric === 'time_focused' ? '2px solid #38bdf8' : '1px solid var(--border-subtle)' }}
-            onClick={() => setSelectedMetric('time_focused')}
-          >
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>3. Time Focused</span>
-            <div style={{ fontSize: '2rem', fontWeight: 800, color: '#38bdf8', margin: '8px 0' }}>
-              {analyticsData.summary.weekly_total_time_mins}m
-            </div>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>Total weekly active focus</span>
-          </div>
-
-          <div
             className={`glass-panel ${selectedMetric === 'speed' ? 'glass-panel-elevated' : ''}`}
             style={{ padding: '20px', cursor: 'pointer', border: selectedMetric === 'speed' ? '2px solid #f59e0b' : '1px solid var(--border-subtle)' }}
             onClick={() => setSelectedMetric('speed')}
@@ -390,7 +378,6 @@ export default function Dashboard() {
               Weekly Analysis: {
                 selectedMetric === 'accuracy' ? 'First-Attempt vs Final Accuracy Trend' :
                 selectedMetric === 'attention' ? 'Attention Span Before Pause / Mini-Game' :
-                selectedMetric === 'time_focused' ? 'Daily Active Time Focused' :
                 'Average Response Speed Post-Lock'
               }
             </h3>
@@ -411,13 +398,6 @@ export default function Dashboard() {
                 Attention Span
               </button>
               <button
-                className={`btn ${selectedMetric === 'time_focused' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-                onClick={() => setSelectedMetric('time_focused')}
-              >
-                Time Focused
-              </button>
-              <button
                 className={`btn ${selectedMetric === 'speed' ? 'btn-primary' : 'btn-secondary'}`}
                 style={{ padding: '6px 12px', fontSize: '0.8rem' }}
                 onClick={() => setSelectedMetric('speed')}
@@ -428,9 +408,7 @@ export default function Dashboard() {
           </div>
 
           <div style={{ height: '360px', width: '100%' }}>
-            {selectedMetric === 'time_focused' ? (
-              <Bar data={analyticsData.charts.time_focused} options={chartOptions} />
-            ) : selectedMetric === 'attention' ? (
+            {selectedMetric === 'attention' ? (
               <Line data={analyticsData.charts.attention} options={chartOptions} />
             ) : selectedMetric === 'speed' ? (
               <Line data={analyticsData.charts.speed} options={chartOptions} />
