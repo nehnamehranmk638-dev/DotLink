@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
+import AnimatedStage from './AnimatedStage';
+import { sound } from '../../utils/soundEffects';
 
 export default function AnimatedLessonPlayer() {
   const { sessionId } = useParams();
@@ -8,6 +10,7 @@ export default function AnimatedLessonPlayer() {
 
   // Session & Bundle State
   const [session, setSession] = useState(null);
+  const [activeChild, setActiveChild] = useState(api.getActiveChild());
   const [scenes, setScenes] = useState([]);
   const [currentSceneIdx, setCurrentSceneIdx] = useState(0);
   const [highlightedWords, setHighlightedWords] = useState([]);
@@ -19,9 +22,13 @@ export default function AnimatedLessonPlayer() {
   // Resume Modal State (Acceptance Check: Shows unlocked bullets FIRST on resume)
   const [showResumeModal, setShowResumeModal] = useState(false);
 
-  // Audio / SpeechSynthesis State
+  // Audio / SpeechSynthesis State & Word-by-Word Karaoke Tracking
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(true);
+  const [speechRate, setSpeechRate] = useState(0.95);
+  const [currentSpokenWordIdx, setCurrentSpokenWordIdx] = useState(-1);
+  const [isMuted, setIsMuted] = useState(false);
+  const fallbackIntervalRef = useRef(null);
 
   // Live Revision Sheet Drawer
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -105,20 +112,74 @@ export default function AnimatedLessonPlayer() {
     return res.json();
   };
 
-  // Speak Narration using Web SpeechSynthesis API
-  const speakScene = (text) => {
+  // Speak Narration using Web SpeechSynthesis API with karaoke word-by-word tracking
+  const speakScene = (text, rateOverride = null) => {
+    if (fallbackIntervalRef.current) {
+      clearInterval(fallbackIntervalRef.current);
+      fallbackIntervalRef.current = null;
+    }
+
     if (!text || !('speechSynthesis' in window)) {
       setSpeechSupported(false);
       return;
     }
+
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.95;
-    utterance.pitch = 1.05;
+    const activeRate = rateOverride || speechRate;
+    utterance.rate = activeRate;
+    utterance.pitch = 1.08; // Cheerful, warm kid-friendly pitch
 
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => setIsSpeaking(false);
-    utterance.onerror = () => setIsSpeaking(false);
+    const words = text.split(/\s+/).filter(Boolean);
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      setCurrentSpokenWordIdx(0);
+
+      // Fallback interval in case browser omits onboundary events
+      let currentIdx = 0;
+      const intervalMs = Math.max(160, Math.round(290 / activeRate));
+      fallbackIntervalRef.current = setInterval(() => {
+        currentIdx++;
+        if (currentIdx < words.length) {
+          setCurrentSpokenWordIdx(currentIdx);
+        } else {
+          clearInterval(fallbackIntervalRef.current);
+          fallbackIntervalRef.current = null;
+        }
+      }, intervalMs);
+    };
+
+    utterance.onboundary = (e) => {
+      if (e.name === 'word' || e.charIndex !== undefined) {
+        let charCount = 0;
+        for (let i = 0; i < words.length; i++) {
+          charCount += words[i].length + 1;
+          if (charCount > e.charIndex) {
+            setCurrentSpokenWordIdx(i);
+            break;
+          }
+        }
+      }
+    };
+
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      setCurrentSpokenWordIdx(-1);
+      if (fallbackIntervalRef.current) {
+        clearInterval(fallbackIntervalRef.current);
+        fallbackIntervalRef.current = null;
+      }
+    };
+
+    utterance.onerror = () => {
+      setIsSpeaking(false);
+      setCurrentSpokenWordIdx(-1);
+      if (fallbackIntervalRef.current) {
+        clearInterval(fallbackIntervalRef.current);
+        fallbackIntervalRef.current = null;
+      }
+    };
 
     window.speechSynthesis.speak(utterance);
   };
@@ -126,17 +187,33 @@ export default function AnimatedLessonPlayer() {
   const handleStopSpeaking = () => {
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
-      setIsSpeaking(false);
     }
+    if (fallbackIntervalRef.current) {
+      clearInterval(fallbackIntervalRef.current);
+      fallbackIntervalRef.current = null;
+    }
+    setIsSpeaking(false);
+    setCurrentSpokenWordIdx(-1);
   };
 
   const handleReplayNarration = () => {
+    sound.playPop();
     const scene = scenes[currentSceneIdx];
     if (scene) speakScene(scene.narration_text);
   };
 
+  const handleRateChange = (newRate) => {
+    setSpeechRate(newRate);
+    sound.playPop();
+    if (isSpeaking) {
+      const scene = scenes[currentSceneIdx];
+      if (scene) speakScene(scene.narration_text, newRate);
+    }
+  };
+
   // Check 1: Click Highlighted Word
   const handleWordClick = async (wordObj) => {
+    sound.playPop();
     lastInteractionRef.current = Date.now();
     try {
       const res = await api.adaptiveInteract({
@@ -150,17 +227,8 @@ export default function AnimatedLessonPlayer() {
         setUnlockedBullets((prev) => [...prev, res.unlocked_bullet]);
         setJustUnlockedIndex(unlockedBullets.length);
         setDrawerOpen(true);
-        // Play brief positive chime if audio context available
-        try {
-          const ctx = new (window.AudioContext || window.webkitAudioContext)();
-          const osc = ctx.createOscillator();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-          osc.frequency.setValueAtTime(880, ctx.currentTime + 0.1); // A5
-          osc.connect(ctx.destination);
-          osc.start();
-          osc.stop(ctx.currentTime + 0.25);
-        } catch (e) {}
+        // Play triumphant fanfare upon unlocking revision bullet
+        sound.playSuccess();
       }
     } catch (err) {
       console.error(err);
@@ -262,6 +330,7 @@ export default function AnimatedLessonPlayer() {
 
   const goToNextScene = async () => {
     handleStopSpeaking();
+    sound.playChime();
     const nextIdx = currentSceneIdx + 1;
     if (nextIdx < scenes.length) {
       // Check if there is an in-video question scheduled after this scene
@@ -282,12 +351,14 @@ export default function AnimatedLessonPlayer() {
       }).catch(() => {});
     } else {
       // Lesson finished -> Launch Quiz Set A
+      sound.playSuccess();
       navigate(`/play/quiz/${sessionId}`);
     }
   };
 
   const handlePauseAndExit = async () => {
     handleStopSpeaking();
+    sound.playPop();
     const token = localStorage.getItem('dotlink_token');
     await fetch(`http://localhost:8000/sessions/${sessionId}/pause`, {
       method: 'POST',
@@ -299,61 +370,93 @@ export default function AnimatedLessonPlayer() {
 
   const currentScene = scenes[currentSceneIdx];
 
-  // Highlight word replacement helper
+  // Tokenized Karaoke & Clickable Word Replacement
   const renderInteractiveNarration = (text) => {
     if (!text) return null;
-    let parts = [text];
-    highlightedWords.forEach((hw) => {
-      const regex = new RegExp(`\\b(${hw.word})\\b`, 'gi');
-      const newParts = [];
-      parts.forEach((p) => {
-        if (typeof p === 'string') {
-          const split = p.split(regex);
-          for (let i = 0; i < split.length; i++) {
-            if (split[i].toLowerCase() === hw.word.toLowerCase()) {
-              newParts.push(
-                <span
-                  key={`${hw.word}-${i}`}
-                  className="pulsing-word"
-                  title={`Key Concept: ${hw.key_point}. Click to add to your Revision Sheet!`}
-                  onClick={() => handleWordClick(hw)}
-                >
-                  ✨ {split[i]}
-                </span>
-              );
-            } else if (split[i]) {
-              newParts.push(split[i]);
-            }
-          }
-        } else {
-          newParts.push(p);
-        }
-      });
-      parts = newParts;
+    const words = text.split(/\s+/).filter(Boolean);
+
+    // Build map for highlighted concept keywords
+    const highlightLookup = new Map();
+    (highlightedWords || []).forEach((hw) => {
+      highlightLookup.set(hw.word.toLowerCase(), hw);
     });
-    return parts;
+
+    return words.map((w, idx) => {
+      // Clean word for concept lookup
+      const cleanWord = w.replace(/^[^\w]+|[^\w]+$/g, '').toLowerCase();
+      const hw = highlightLookup.get(cleanWord);
+      const isCurrentlySpoken = isSpeaking && idx === currentSpokenWordIdx;
+
+      if (hw) {
+        return (
+          <span
+            key={`word-${idx}`}
+            className="pulsing-word"
+            style={{
+              margin: '0 4px',
+              border: isCurrentlySpoken ? '2px solid #fef08a' : undefined,
+              boxShadow: isCurrentlySpoken ? '0 0 18px #fbbf24' : undefined,
+              transform: isCurrentlySpoken ? 'scale(1.15)' : undefined
+            }}
+            title={`Key Concept: ${hw.key_point}. Click to add to your Revision Sheet!`}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleWordClick(hw);
+            }}
+          >
+            ✨ {w}{' '}
+          </span>
+        );
+      }
+
+      if (isCurrentlySpoken) {
+        return (
+          <span key={`word-${idx}`} className="karaoke-current-word">
+            {w}{' '}
+          </span>
+        );
+      }
+
+      return <span key={`word-${idx}`}>{w} </span>;
+    });
   };
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px', position: 'relative' }}>
       {/* Top Session Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <button className="btn btn-secondary" onClick={handlePauseAndExit}>
-          ⏸ Pause & Save Lesson
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button className="btn btn-secondary" onClick={handlePauseAndExit}>
+            ⏸ Pause & Save Lesson
+          </button>
+          <button
+            className="btn btn-secondary"
+            style={{ padding: '8px 14px', fontSize: '0.9rem' }}
+            onClick={() => {
+              const muted = sound.toggleMute();
+              setIsMuted(muted);
+            }}
+            title={isMuted ? 'Sound FX Muted - Tap to Unmute' : 'Sound FX Active - Tap to Mute'}
+          >
+            {isMuted ? '🔇 Sound Muted' : '🔊 Sound FX On'}
+          </button>
+        </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)' }}>
+          <span style={{ fontSize: '0.95rem', color: 'var(--text-muted)', fontWeight: 600 }}>
             Scene {currentSceneIdx + 1} of {scenes.length || 4}
           </span>
           <button
             className="btn btn-primary"
-            style={{ padding: '8px 16px', position: 'relative' }}
-            onClick={() => setDrawerOpen(true)}
+            style={{ padding: '8px 18px', position: 'relative' }}
+            onClick={() => {
+              sound.playPop();
+              setDrawerOpen(true);
+            }}
           >
             📋 Revision Sheet ({unlockedBullets.length}/{revisionBullets.length})
             {justUnlockedIndex !== null && (
-              <span style={{ position: 'absolute', top: '-6px', right: '-6px', width: '12px', height: '12px', borderRadius: '50%', background: '#ec4899', border: '2px solid white' }} />
+              <span style={{ position: 'absolute', top: '-6px', right: '-6px', width: '14px', height: '14px', borderRadius: '50%', background: '#ec4899', border: '2px solid white', animation: 'ping 1.2s infinite' }} />
             )}
           </button>
         </div>
@@ -361,76 +464,81 @@ export default function AnimatedLessonPlayer() {
 
       {/* Main Animated Scene Card */}
       {currentScene ? (
-        <div className="glass-panel-elevated" style={{ padding: '36px', minHeight: '480px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-          {/* Animated Visual Stage */}
-          <div
-            style={{
-              height: '240px',
-              borderRadius: 'var(--radius-lg)',
-              background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%)',
-              border: '2px solid rgba(165, 180, 252, 0.25)',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              position: 'relative',
-              overflow: 'hidden',
-              marginBottom: '28px',
-              boxShadow: 'inset 0 0 40px rgba(0,0,0,0.5)'
+        <div className="glass-panel-elevated" style={{ padding: '28px', minHeight: '520px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          {/* Dynamic Anime.js Animated Educational Stage */}
+          <AnimatedStage
+            scene={currentScene}
+            sceneIndex={currentSceneIdx}
+            totalScenes={scenes.length}
+            mascotName={session?.mascot_name || activeChild?.mascot_name || 'Luna the Owl'}
+            isSpeaking={isSpeaking}
+            subjectTag={session?.subject_tag || 'Maths'}
+            onInteraction={() => {
+              lastInteractionRef.current = Date.now();
             }}
-          >
-            {/* SVG Animated Graphic */}
-            <div style={{ position: 'absolute', inset: 0, opacity: 0.15 }}>
-              <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="white" strokeWidth="1"/>
-                  </pattern>
-                </defs>
-                <rect width="100%" height="100%" fill="url(#grid)" />
-              </svg>
-            </div>
+          />
 
-            <div style={{ textAlign: 'center', zIndex: 1, padding: '20px' }}>
-              <div style={{ fontSize: '3rem', marginBottom: '8px', filter: 'drop-shadow(0 4px 12px rgba(236,72,153,0.5))' }}>
-                {currentSceneIdx === 0 ? '🏰' : currentSceneIdx === 1 ? '🧱' : currentSceneIdx === 2 ? '📐' : '🌟'}
+          {/* Interactive Narration & Voice Controls */}
+          <div style={{ background: 'rgba(15, 23, 42, 0.75)', padding: '24px', borderRadius: 'var(--radius-md)', border: '1px solid rgba(165, 180, 252, 0.2)', marginBottom: '24px', boxShadow: 'inset 0 2px 10px rgba(0,0,0,0.3)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--color-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  🎙 Companion Voice Narration
+                </span>
+                <span style={{ fontSize: '0.78rem', color: '#c7d2fe', background: 'rgba(99, 102, 241, 0.2)', padding: '2px 8px', borderRadius: '6px' }}>
+                  Click glowing words to unlock stars! ⭐
+                </span>
               </div>
-              <h2 style={{ fontSize: '1.8rem', color: '#ffffff', marginBottom: '8px' }}>
-                {currentScene.title}
-              </h2>
-              <p style={{ color: '#c7d2fe', fontSize: '0.95rem', maxWidth: '640px' }}>
-                {currentScene.visual_description}
-              </p>
-            </div>
-          </div>
 
-          {/* Interactive Narration & Clickable Words */}
-          <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '24px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', marginBottom: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                🎙 Narration · Click glowing words to unlock revision points!
-              </span>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              {/* Voice Speed & Playback Controls */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', background: 'rgba(30, 41, 59, 0.8)', borderRadius: '8px', padding: '2px', border: '1px solid var(--border-subtle)' }}>
+                  {[
+                    { label: '0.85x', rate: 0.85 },
+                    { label: '1.0x', rate: 0.95 },
+                    { label: '1.2x', rate: 1.15 }
+                  ].map((spd) => (
+                    <button
+                      key={spd.label}
+                      type="button"
+                      onClick={() => handleRateChange(spd.rate)}
+                      style={{
+                        padding: '4px 10px',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        background: Math.abs(speechRate - spd.rate) < 0.05 ? 'var(--color-primary)' : 'transparent',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      {spd.label}
+                    </button>
+                  ))}
+                </div>
+
                 <button
                   className="btn btn-secondary"
-                  style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                  style={{ padding: '6px 14px', fontSize: '0.85rem', fontWeight: 700 }}
                   onClick={handleReplayNarration}
                 >
-                  🔊 Replay
+                  🔊 Listen
                 </button>
                 {isSpeaking && (
                   <button
                     className="btn btn-secondary"
-                    style={{ padding: '6px 12px', fontSize: '0.8rem', color: '#fca5a5' }}
+                    style={{ padding: '6px 14px', fontSize: '0.85rem', color: '#fca5a5', fontWeight: 700 }}
                     onClick={handleStopSpeaking}
                   >
-                    ⏹ Stop
+                    ⏹ Pause Voice
                   </button>
                 )}
               </div>
             </div>
 
-            <p style={{ fontSize: '1.25rem', lineHeight: '1.8', color: '#f8fafc' }}>
+            {/* Karaoke Highlighted Narration Text */}
+            <p style={{ fontSize: '1.28rem', lineHeight: '2.1', color: '#f8fafc', fontWeight: 500 }}>
               {renderInteractiveNarration(currentScene.narration_text)}
             </p>
           </div>
@@ -442,6 +550,8 @@ export default function AnimatedLessonPlayer() {
               disabled={currentSceneIdx === 0}
               onClick={() => {
                 handleStopSpeaking();
+                sound.playPop();
+                sound.playChime();
                 setCurrentSceneIdx(currentSceneIdx - 1);
                 speakScene(scenes[currentSceneIdx - 1]?.narration_text);
               }}
@@ -451,9 +561,13 @@ export default function AnimatedLessonPlayer() {
 
             <button
               className="btn btn-primary btn-lg"
-              onClick={goToNextScene}
+              style={{ padding: '14px 32px', fontSize: '1.1rem', fontWeight: 800 }}
+              onClick={() => {
+                sound.playPop();
+                goToNextScene();
+              }}
             >
-              {currentSceneIdx + 1 === scenes.length ? 'Finish Lesson & Take Quiz →' : 'Next Scene →'}
+              {currentSceneIdx + 1 === scenes.length ? 'Finish Lesson & Take Quiz 🚀' : 'Next Scene →'}
             </button>
           </div>
         </div>
