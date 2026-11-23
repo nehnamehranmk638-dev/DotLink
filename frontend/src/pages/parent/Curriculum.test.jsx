@@ -30,13 +30,14 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('Curriculum upload results', () => {
-  it('provides a review link for generated lessons awaiting parent approval', async () => {
+  it('displays generated status and ready to play without review step', async () => {
     api.getTextbooks.mockResolvedValue([book]);
-    api.getTopics.mockResolvedValue([{ ...topic, status: 'needs_review' }]);
+    api.getTopics.mockResolvedValue([{ ...topic, status: 'approved' }]);
     render(<MemoryRouter><Curriculum /></MemoryRouter>);
-    expect(await screen.findByRole('button', { name: 'Review Lesson', exact: true })).toBeInTheDocument();
-    expect(screen.getByText('AWAITING PARENT REVIEW')).toBeInTheDocument();
-    expect(screen.queryByText('Ready to Play')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: '✓ Generated', exact: true })).toBeInTheDocument();
+    expect(screen.getByText('✓ Ready to Play')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Review Lesson' })).not.toBeInTheDocument();
+    expect(screen.queryByText('AWAITING PARENT REVIEW')).not.toBeInTheDocument();
   });
 
   it('shows saved textbooks and chapters after upload and after reopening the page', async () => {

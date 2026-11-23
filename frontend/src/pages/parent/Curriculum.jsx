@@ -274,7 +274,7 @@ export default function Curriculum() {
           const t = fresh.find((item) => item.id === generatedId);
           if (t && t.status !== 'generating') {
             clearInterval(interval);
-            setStatusMessage(`Lesson generated for "${t.name}"! It is ready for parent review.`);
+            setStatusMessage(`Lesson generated for "${t.name}"! Ready to play.`);
           }
         }
       }, 3000);
@@ -842,9 +842,9 @@ export default function Curriculum() {
                           {isExpanded && (
                             <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', backgroundColor: '#ffffff' }}>
                               {ch.topics.map((t) => {
-                                const isReady = t.status === 'approved' || t.status === 'generated';
-                                const needsReview = t.status === 'needs_review';
+                                const isGenerated = t.status === 'approved' || t.status === 'generated' || t.status === 'needs_review';
                                 const isGenerating = t.status === 'generating';
+                                const isChunked = !isGenerated && !isGenerating;
                                 const cleanTopicName = (t.name || '').replace(/^(?:Topic\s*)?\d+(\.\d+)?[:\s\-]*/i, '');
                                 const topicDisplayTitle = `Topic ${ch.chapter_number}.${t.topic_number || 1}: ${cleanTopicName}`;
 
@@ -871,7 +871,7 @@ export default function Curriculum() {
                                         <span style={{ fontSize: '12px', fontWeight: 700, color: '#4b5563', backgroundColor: '#e5e7eb', padding: '2px 8px', borderRadius: '6px' }}>
                                           Pages {t.start_page}–{t.end_page}
                                         </span>
-                                        {isReady && (
+                                        {isGenerated && (
                                           <span style={{ backgroundColor: '#dcfce7', color: '#15803d', fontSize: '12px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px' }}>
                                             ✓ Ready to Play
                                           </span>
@@ -881,9 +881,9 @@ export default function Curriculum() {
                                             ⚙️ Generating...
                                           </span>
                                         )}
-                                        {!isReady && !isGenerating && (
+                                        {isChunked && (
                                           <span style={{ backgroundColor: '#e0e7ff', color: '#3730a3', fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px' }}>
-                                            {needsReview ? 'AWAITING PARENT REVIEW' : 'CHUNKED'}
+                                            CHUNKED
                                           </span>
                                         )}
                                       </div>
@@ -918,13 +918,47 @@ export default function Curriculum() {
 
                                     {/* Action Buttons */}
                                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                      {(isReady || needsReview) && (
-                                        <button type="button" onClick={() => navigate(`/review/${t.id}`)}
-                                          style={{ background: '#45335d', color: '#fff', border: 'none', borderRadius: '9999px', padding: '8px 18px', fontWeight: 700, cursor: 'pointer' }}>
-                                          {needsReview ? 'Review Lesson' : 'View Lesson'}
+                                      {isGenerated ? (
+                                        <button
+                                          type="button"
+                                          disabled
+                                          style={{
+                                            backgroundColor: '#dcfce7',
+                                            color: '#15803d',
+                                            border: '2px solid #86efac',
+                                            borderRadius: '9999px',
+                                            padding: '8px 18px',
+                                            fontWeight: 800,
+                                            fontSize: '14px',
+                                            cursor: 'default',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px'
+                                          }}
+                                        >
+                                          ✓ Generated
                                         </button>
-                                      )}
-                                      {!isReady && !isGenerating && (
+                                      ) : isGenerating ? (
+                                        <button
+                                          type="button"
+                                          disabled
+                                          style={{
+                                            backgroundColor: '#fef3c7',
+                                            color: '#b45309',
+                                            border: '2px solid #fcd34d',
+                                            borderRadius: '9999px',
+                                            padding: '8px 18px',
+                                            fontWeight: 800,
+                                            fontSize: '14px',
+                                            cursor: 'wait',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '6px'
+                                          }}
+                                        >
+                                          ⚙️ Generating...
+                                        </button>
+                                      ) : (
                                         <button
                                           type="button"
                                           onClick={() => handleGenerateLesson(t.id)}
