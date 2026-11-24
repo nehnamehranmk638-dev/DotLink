@@ -144,22 +144,19 @@ export default function CurriculumReview() {
         </div>
 
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          {topic.status === 'approved' ? (
-            <button
-              className="btn btn-primary btn-lg"
-              onClick={() => navigate('/play')}
-            >
-              ▶ Play in Child Mode
-            </button>
-          ) : (
-            <button
-              className="btn btn-success btn-lg"
-              onClick={handleApprove}
-              disabled={approving}
-            >
-              ✓ Approve Topic
-            </button>
-          )}
+          <button
+            className="btn btn-primary btn-lg"
+            onClick={() => navigate('/play')}
+          >
+            ▶ Play in Child Mode
+          </button>
+          <button
+            className="btn btn-success btn-lg"
+            onClick={handleApprove}
+            disabled={approving}
+          >
+            ✓ Mark Verified
+          </button>
         </div>
       </div>
 
@@ -174,13 +171,10 @@ export default function CurriculumReview() {
         </div>
       )}
 
-      {/* Warning banner if questions count is not 10 each */}
-      {!canApprove && (
-        <div style={{ background: 'rgba(245, 158, 11, 0.15)', border: '1px solid rgba(245, 158, 11, 0.4)', color: '#fde68a', padding: '14px 20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', fontSize: '0.9rem' }}>
-          <strong>Notice:</strong> Quiz Set A has {quizASet.length}/10 questions, and Quiz Set B has {quizBSet.length}/10 questions.
-          Both sets must have exactly 10 questions before approval is permitted.
-        </div>
-      )}
+      {/* Optional review guidance banner */}
+      <div style={{ background: 'rgba(99, 102, 241, 0.12)', border: '1px solid rgba(165, 180, 252, 0.3)', color: 'var(--color-primary-light)', padding: '14px 20px', borderRadius: 'var(--radius-md)', marginBottom: '24px', fontSize: '0.9rem' }}>
+        <strong>Optional Parent Review:</strong> This lesson is already generated and playable in Child Mode. You can inspect or edit questions and scenes below at any time.
+      </div>
 
       <div className="glass-panel" style={{ padding: 20, marginBottom: 24 }}>
         <p>Version {topic.version} · {topic.word_count ?? '—'} source words · Pages {topic.start_page}–{topic.end_page}</p>

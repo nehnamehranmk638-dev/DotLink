@@ -289,3 +289,85 @@ async def test_existing_approved_content_unchanged_by_rerun():
     assert live_child_topics[0]["id"] == approved_topic_id
 
     await db.close()
+
+# -----------------------------------------------------------------------------
+# 7. Bug 2: (a) Short single-activity worksheet stays 1 topic
+# -----------------------------------------------------------------------------
+def test_short_single_activity_worksheet_stays_one_topic():
+    pages = [
+        {"page_number": 1, "text": "Worksheet: Geometric Shapes\nActivity: Look around your classroom and list all objects shaped like a circle, square, or triangle.\nDraw each shape in the box provided below."}
+    ]
+    topics = split_sections(pages, chapter_title="Geometry Practice Worksheet", chapter_number=1)
+    assert len(topics) == 1
+    t = topics[0]
+    assert t["topic_number"] == 1
+    assert t["start_page"] == 1
+    assert t["end_page"] == 1
+    assert t["decision_trace"] == "Chapter is short, kept as one topic"
+
+# -----------------------------------------------------------------------------
+# 8. Bug 2: (b) Short chapter with multiple pedagogical activity types splits into sub-topics
+# -----------------------------------------------------------------------------
+def test_short_chapter_with_multiple_pedagogical_activities_splits_into_subtopics():
+    # 8-page chapter modelled after Santoor Grade 4 "Together We Can"
+    pages = [
+        {"page_number": 1, "text": "Together We Can\nPoem: Two little birds sitting in a tree, singing sweet songs for you and me. Together they build a nest with straw and leaves."},
+        {"page_number": 2, "text": "Let us Recite\nRead the poem aloud with your partner. Notice how rhythm and rhyming words create joyful harmony across each verse."},
+        {"page_number": 3, "text": "Let us Think\nWhy did the birds work together? What happens when friends help each other during difficult tasks? Answer in your own words."},
+        {"page_number": 4, "text": "Let us Speak\nDiscuss with your classmates about a time when you and your family cooperated to clean the house or prepare dinner."},
+        {"page_number": 5, "text": "Let us Learn\nNew Vocabulary Words: Nest, Straw, Twigs, Harmony, Cooperate. Learn their definitions and use them in full sentences."},
+        {"page_number": 6, "text": "Let us Write\nWrite a short paragraph about how your school team worked together to win an exciting sports relay race."},
+        {"page_number": 7, "text": "Let us Do\nProject Time: Gather fallen leaves and twigs from the school garden and create a miniature model nest with clay."},
+        {"page_number": 8, "text": "Worked Example: Model Presentation Steps\nStep 1: Explain your nest design. Step 2: List the natural materials used. Step 3: Present proudly."}
+    ]
+    topics = split_sections(pages, chapter_title="Together We Can", chapter_number=1)
+    # Must produce distinct sub-topics for the distinct activities
+    assert len(topics) >= 5, f"Expected multiple sub-topics, got {len(topics)}"
+    
+    # Check that pedagogical activity markers appear in the sub-topic names and rules
+    topic_names = [t["name"] for t in topics]
+    assert any("Recite" in name for name in topic_names)
+    assert any("Think" in name for name in topic_names)
+    assert any("Speak" in name for name in topic_names)
+    assert any("Write" in name or "Learn" in name for name in topic_names)
+
+    # Verify atomic worked example was preserved intact
+    we_topics = [t for t in topics if "Worked Example" in t["text"]]
+    assert len(we_topics) == 1
+    assert "Step 1: Explain your nest design" in we_topics[0]["text"]
+    assert "Step 3: Present proudly" in we_topics[0]["text"]
+
+    # Verify boundary rules recorded in decision_trace
+    for t in topics:
+        assert len(t["decision_trace"]) > 0
+        assert "pedagogical_marker" in t["decision_trace"] or "heading" in t["decision_trace"].lower() or "activity" in t["decision_trace"].lower() or "topic" in t["decision_trace"].lower()
+
+# -----------------------------------------------------------------------------
+# 9. Bug 2: (c) Simulated full textbook with 10+ chapters produces 10+ separate chapter entries
+# -----------------------------------------------------------------------------
+def test_simulated_full_textbook_ten_plus_chapters_produces_separate_chapters():
+    from app.agents.chunking_agent import extract_curriculum_structure
+    pages = []
+    chapter_names = [
+        "Real Numbers", "Polynomials", "Linear Equations", "Quadratic Equations",
+        "Arithmetic Progressions", "Triangles", "Coordinate Geometry",
+        "Introduction to Trigonometry", "Circles", "Constructions", "Surface Areas and Volumes"
+    ]
+    # 3 pages per chapter = 33 pages total
+    page_num = 1
+    for i, ch_name in enumerate(chapter_names):
+        pages.append({"page_number": page_num, "text": f"Chapter {i + 1}: {ch_name}\nFundamental mathematical principles and definitions of {ch_name}."})
+        pages.append({"page_number": page_num + 1, "text": f"Worked Example on {ch_name} with step-by-step solutions and analysis."})
+        pages.append({"page_number": page_num + 2, "text": f"Exercise {i + 1}.1: Practice questions on {ch_name}."})
+        page_num += 3
+
+    submission = extract_curriculum_structure(pages, textbook_title="Mathematics Grade 10", subject_tag="Maths")
+    
+    # Must produce 11 distinct chapter entries (not merged into 1 blob or truncated)
+    assert len(submission.chapters) == 11
+    for idx, ch in enumerate(submission.chapters):
+        assert ch.chapter_number == idx + 1
+        assert chapter_names[idx].lower() in ch.chapter_title.lower()
+        assert ch.start_page == idx * 3 + 1
+        assert ch.end_page == idx * 3 + 3
+        assert len(ch.topics) >= 1

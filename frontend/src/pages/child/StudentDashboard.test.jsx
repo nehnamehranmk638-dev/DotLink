@@ -44,17 +44,13 @@ it('explains parent approval when no playable lessons are available', async () =
   expect(screen.getByText(/Lessons awaiting review appear here after parent approval/)).toBeInTheDocument();
 });
 
-it('shows a generated lesson awaiting review and refreshes when it is approved', async () => {
+it('shows a generated lesson and allows child to start playing immediately without parent approval', async () => {
   api.getPlayTopics.mockResolvedValue({ topics: [], pending_lessons: [
-    { ...topic, is_unlocked: false, is_pending_review: true, status: 'needs_review' }
+    { ...topic, is_unlocked: true, is_pending_review: true, status: 'approved' }
   ] });
   render(<MemoryRouter><StudentDashboard /></MemoryRouter>);
   expect(await screen.findByRole('heading', { name: /Curved Arches/ })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Waiting for parent approval' })).toBeDisabled();
-  expect(screen.queryByRole('button', { name: /Start Animated Lesson/ })).not.toBeInTheDocument();
-  expect(screen.queryByText('No Approved Lessons Available Yet')).not.toBeInTheDocument();
-  api.getPlayTopics.mockResolvedValue({ topics: [topic], pending_lessons: [] });
-  fireEvent(window, new Event('focus'));
-  expect(await screen.findByRole('button', { name: /Start Animated Lesson/ })).toBeEnabled();
+  expect(screen.getByRole('button', { name: /Start Animated Lesson/ })).toBeEnabled();
   expect(screen.queryByText('Waiting for parent approval')).not.toBeInTheDocument();
+  expect(screen.queryByText('No Approved Lessons Available Yet')).not.toBeInTheDocument();
 });

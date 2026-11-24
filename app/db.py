@@ -74,6 +74,8 @@ async def init_db():
             end_page INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'chunked',
             version INTEGER NOT NULL DEFAULT 1,
+            flagged INTEGER NOT NULL DEFAULT 0,
+            flag_reason TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
         """)
@@ -198,6 +200,10 @@ async def init_db():
             await db.execute("ALTER TABLE topics ADD COLUMN description TEXT;")
         if "version" not in topic_cols:
             await db.execute("ALTER TABLE topics ADD COLUMN version INTEGER NOT NULL DEFAULT 1;")
+        if "flagged" not in topic_cols:
+            await db.execute("ALTER TABLE topics ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0;")
+        if "flag_reason" not in topic_cols:
+            await db.execute("ALTER TABLE topics ADD COLUMN flag_reason TEXT;")
 
         await db.commit()
     finally:

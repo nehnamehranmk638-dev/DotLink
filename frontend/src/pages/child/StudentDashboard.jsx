@@ -102,7 +102,7 @@ export default function StudentDashboard() {
   };
 
   const handleStartOrResume = async (topic) => {
-    if (!topic.is_unlocked) return;
+    if (!topic.is_unlocked && !topic.is_pending_review) return;
     setStartingTopicId(topic.id);
     try {
       const kidId = activeChild?.id || (children[0] ? children[0].id : null);
@@ -286,7 +286,7 @@ export default function StudentDashboard() {
                       {topic.subject_tag}
                     </span>
                     {needsReview ? (
-                      <span className="badge badge-science">Generated · Parent review needed</span>
+                      <span className="badge badge-science">✨ Ready to Play</span>
                     ) : isMastered ? (
                       <span className="badge badge-status-approved">
                         🏆 Mastered
@@ -324,8 +324,15 @@ export default function StudentDashboard() {
                 <div>
                   {needsReview ? (
                     <div style={{ padding: '12px', borderRadius: 'var(--radius-sm)', background: 'rgba(165, 180, 252, 0.12)' }}>
-                      <p style={{ marginBottom: '12px' }}>Your lesson is generated. Ask your parent to review it in Curriculum before you start.</p>
-                      <button className="btn btn-secondary" style={{ width: '100%' }} disabled>Waiting for parent approval</button>
+                      <p style={{ marginBottom: '12px' }}>Your lesson is ready! You can start playing right away.</p>
+                      <button
+                        className="btn btn-success btn-lg"
+                        style={{ width: '100%' }}
+                        disabled={startingTopicId === topic.id}
+                        onClick={() => handleStartOrResume({ ...topic, is_unlocked: true })}
+                      >
+                        {startingTopicId === topic.id ? 'Opening Lesson...' : '▶ Start Animated Lesson'}
+                      </button>
                     </div>
                   ) : isLocked ? (
                     <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '12px', borderRadius: 'var(--radius-sm)', textAlign: 'center', fontSize: '0.85rem', color: 'var(--text-dim)' }}>

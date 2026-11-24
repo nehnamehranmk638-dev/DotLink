@@ -18,7 +18,7 @@ from app.models.schemas import (
 )
 from app.agents.ncert_agent import run_ncert_fetch_and_chunk
 from app.agents.chunking_agent import run_textbook_chunking_agent
-from app.services.pdf_ncert import ingest_uploaded_textbook
+from app.services.pdf_ncert import ingest_uploaded_textbook, extract_pdf_pages, validate_selectable_text, extract_metadata_from_pages
 from app.agents.lesson_revision_agent import run_lesson_and_revision_agent
 from app.agents.quiz_agent import run_quiz_agent
 from app.agents.loop import log_agent_step
@@ -60,10 +60,8 @@ async def _generate_lesson_and_quizzes(topic_id: str, previous_status: str):
             else:
                 await db.executemany("UPDATE questions SET flagged = 1, flag_reason = 'Duplicate of a lesson question; flag_for_parent' WHERE id = ?", [(qid,) for qid in duplicates])
 
-        # Preserve the initial generation flow; replacement versions use existing parent approval.
-        flag_cursor = await db.execute("SELECT COUNT(*) as n FROM questions WHERE topic_id = ? AND flagged = 1", (topic_id,))
-        needs_review = previous_status == "needs_review" or (await flag_cursor.fetchone())["n"] > 0
-        await db.execute("UPDATE topics SET status = ? WHERE id = ?", ("needs_review" if needs_review else "approved", topic_id))
+        # Generated topic passes validation and is immediately live/playable
+        await db.execute("UPDATE topics SET status = 'approved' WHERE id = ?", (topic_id,))
         await db.commit()
     except Exception as e:
         # On failure: restore previous status and log error
@@ -102,17 +100,34 @@ async def upload_and_chunk_textbook(
 
     db = await get_db()
     try:
+        pages = await asyncio.to_thread(extract_pdf_pages, pdf_bytes)
+        validate_selectable_text(pages)
+        meta = extract_metadata_from_pages(pages, filename=file.filename)
+
         if grade is None:
-            c_cur = await db.execute("SELECT grade FROM children WHERE parent_id = ? ORDER BY created_at ASC LIMIT 1", (parent["id"],))
-            c_row = await c_cur.fetchone()
-            grade = c_row["grade"] if c_row else 4
+            if meta.get("detected_grade"):
+                grade = meta["detected_grade"]
+            else:
+                c_cur = await db.execute("SELECT grade FROM children WHERE parent_id = ? ORDER BY created_at ASC LIMIT 1", (parent["id"],))
+                c_row = await c_cur.fetchone()
+                grade = c_row["grade"] if c_row else 4
+
+        if not subject_tag or subject_tag.lower() in ("general", "ncert"):
+            if meta.get("detected_subject"):
+                subject_tag = meta["detected_subject"]
 
         clean_title = (title or "").strip()
+        is_fallback_title = False
         if not clean_title:
-            base_name = file.filename.rsplit(".", 1)[0]
-            clean_title = base_name.replace("_", " ").replace("-", " ").title()
-            if not clean_title:
-                clean_title = f"{subject_tag} Grade {grade}"
+            if meta.get("detected_title"):
+                clean_title = meta["detected_title"]
+            else:
+                base_name = file.filename.rsplit(".", 1)[0]
+                clean_title = base_name.replace("_", " ").replace("-", " ").title()
+                if not clean_title:
+                    clean_title = f"{subject_tag} Grade {grade}"
+                is_fallback_title = True
+
         textbook_id, page_count, pages = await ingest_uploaded_textbook(
             parent_id=parent["id"],
             grade=grade,
@@ -120,14 +135,16 @@ async def upload_and_chunk_textbook(
             title=clean_title,
             filename=file.filename,
             pdf_bytes=pdf_bytes,
-            db=db
+            db=db,
+            pre_extracted_pages=pages
         )
 
         result = await run_textbook_chunking_agent(
             textbook_id=textbook_id,
             grade=grade,
             subject_tag=subject_tag,
-            db=db
+            db=db,
+            is_fallback_title=is_fallback_title
         )
         return result
     except ValueError as ve:
@@ -224,6 +241,8 @@ async def list_topics_for_textbook(id: str, parent: dict = Depends(get_current_p
                 end_page=r["end_page"],
                 status=r["status"],
                 version=r["version"],
+                flagged=bool(r["flagged"]) if "flagged" in r.keys() else False,
+                flag_reason=r["flag_reason"] if "flag_reason" in r.keys() else None,
                 created_at=str(r["created_at"])
             )
             for r in rows
@@ -251,6 +270,8 @@ async def get_topic(id: str, parent: dict = Depends(get_current_parent)):
             end_page=topic["end_page"],
             status=topic["status"],
             version=topic["version"], word_count=count_words(source_text), source_text=source_text,
+            flagged=bool(topic["flagged"]) if "flagged" in topic.keys() else False,
+            flag_reason=topic["flag_reason"] if "flag_reason" in topic.keys() else None,
             created_at=str(topic["created_at"])
         )
     finally:

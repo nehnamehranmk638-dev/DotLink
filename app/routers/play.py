@@ -30,14 +30,14 @@ async def get_child_topics_with_lock_state(child_id: str, db, parent_id: Optiona
             SELECT t.*, tb.title as textbook_title, tb.grade, tb.parent_id
             FROM topics t
             JOIN textbooks tb ON t.textbook_id = tb.id
-            WHERE tb.parent_id = ? AND t.status = 'approved' AND t.version = (
+            WHERE tb.parent_id = ? AND (t.status = 'approved' OR EXISTS (SELECT 1 FROM lesson_bundles lb WHERE lb.topic_id = t.id)) AND t.version = (
                 SELECT MAX(v.version) FROM topics v WHERE v.textbook_id = t.textbook_id
-                AND v.chapter_number = t.chapter_number AND v.status = 'approved'
+                AND v.chapter_number = t.chapter_number AND (v.status = 'approved' OR EXISTS (SELECT 1 FROM lesson_bundles lb WHERE lb.topic_id = v.id))
                 AND (v.version = (SELECT MIN(original.version) FROM topics original
                     WHERE original.textbook_id = v.textbook_id AND original.chapter_number = v.chapter_number)
                 OR NOT EXISTS (SELECT 1 FROM topics pending WHERE pending.textbook_id = v.textbook_id
                     AND pending.chapter_number = v.chapter_number AND pending.version = v.version
-                    AND pending.status != 'approved')))
+                    AND pending.status != 'approved' AND NOT EXISTS (SELECT 1 FROM lesson_bundles lb2 WHERE lb2.topic_id = pending.id))))
             ORDER BY t.textbook_id ASC, t.chapter_number ASC, t.topic_number ASC, t.start_page ASC
         """, (parent_id,))
     else:
@@ -45,14 +45,14 @@ async def get_child_topics_with_lock_state(child_id: str, db, parent_id: Optiona
             SELECT t.*, tb.title as textbook_title, tb.grade, tb.parent_id
             FROM topics t
             JOIN textbooks tb ON t.textbook_id = tb.id
-            WHERE t.status = 'approved' AND t.version = (
+            WHERE (t.status = 'approved' OR EXISTS (SELECT 1 FROM lesson_bundles lb WHERE lb.topic_id = t.id)) AND t.version = (
                 SELECT MAX(v.version) FROM topics v WHERE v.textbook_id = t.textbook_id
-                AND v.chapter_number = t.chapter_number AND v.status = 'approved'
+                AND v.chapter_number = t.chapter_number AND (v.status = 'approved' OR EXISTS (SELECT 1 FROM lesson_bundles lb WHERE lb.topic_id = v.id))
                 AND (v.version = (SELECT MIN(original.version) FROM topics original
                     WHERE original.textbook_id = v.textbook_id AND original.chapter_number = v.chapter_number)
                 OR NOT EXISTS (SELECT 1 FROM topics pending WHERE pending.textbook_id = v.textbook_id
                     AND pending.chapter_number = v.chapter_number AND pending.version = v.version
-                    AND pending.status != 'approved')))
+                    AND pending.status != 'approved' AND NOT EXISTS (SELECT 1 FROM lesson_bundles lb2 WHERE lb2.topic_id = pending.id))))
             ORDER BY t.textbook_id ASC, t.chapter_number ASC, t.topic_number ASC, t.start_page ASC
         """)
     all_topics = await cursor.fetchall()
@@ -160,8 +160,9 @@ async def get_play_topics(child_id: str, parent: dict = Depends(get_current_pare
                     AND live.version < t.version AND live.status = 'approved')
             ORDER BY tb.created_at DESC, t.chapter_number, t.topic_number
         """, (parent["id"],))
-        pending_lessons = [dict(row, status="needs_review", is_pending_review=True, is_unlocked=False)
-                           for row in await pending_cursor.fetchall()]
+        existing_ids = {t["id"] for t in topics}
+        pending_lessons = [dict(row, status="approved", is_pending_review=False, is_unlocked=True)
+                           for row in await pending_cursor.fetchall() if row["id"] not in existing_ids]
         return {"child": child, "topics": topics, "chapters": chapters, "pending_lessons": pending_lessons}
     finally:
         await db.close()
@@ -191,12 +192,6 @@ async def start_or_resume_session(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Topic not found or does not belong to parent."
             )
-        if topic["status"] != "approved":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Topic is not ready for learning."
-            )
-
         cursor = await db.execute("SELECT * FROM lesson_bundles WHERE topic_id = ?", (req.topic_id,))
         bundle_row = await cursor.fetchone()
         if not bundle_row:

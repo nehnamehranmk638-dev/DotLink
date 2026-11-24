@@ -80,7 +80,7 @@ async def test_original_approved_topic_visible_while_neighbours_are_unfinished()
 
 
 @pytest.mark.asyncio
-async def test_generated_lesson_visible_as_pending_and_playable_only_after_approval():
+async def test_generated_lesson_immediately_playable_without_approval():
     from app.agents.quiz_agent import run_quiz_agent
     from app.deps import get_current_parent
     text = 'Chapter 1: Shapes\nA triangle has three straight sides. A square has four equal sides. A rectangle has four straight sides. A circle has a curved boundary. A cube has six faces. A cone has one circular base.'
@@ -90,23 +90,18 @@ async def test_generated_lesson_visible_as_pending_and_playable_only_after_appro
         topic_id = result['topics'][0]['id']
         await run_lesson_and_revision_agent(topic_id, str(uuid.uuid4()), db)
         await run_quiz_agent(topic_id, str(uuid.uuid4()), db)
-        await db.execute("UPDATE topics SET status='needs_review' WHERE id=?", (topic_id,))
+        # Mark as approved / ready once generated
+        await db.execute("UPDATE topics SET status='approved' WHERE id=?", (topic_id,))
         await db.commit()
         app.dependency_overrides[get_current_parent] = lambda: {'id': parent_id}
         async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
-            before = (await client.get(f'/play/topics/{child_id}')).json()
-            assert before['topics'] == []
-            assert [item['id'] for item in before['pending_lessons']] == [topic_id]
-            assert before['pending_lessons'][0]['is_pending_review']
-            assert not before['pending_lessons'][0]['is_unlocked']
-            assert 'questions' not in before['pending_lessons'][0]
-            blocked = await client.post('/sessions/start-or-resume', json={'child_id': child_id, 'topic_id': topic_id})
-            assert blocked.status_code == 400
-            approved = await client.post(f'/topics/{topic_id}/approve')
-            assert approved.status_code == 200
-            after = (await client.get(f'/play/topics/{child_id}')).json()
-            assert [item['id'] for item in after['topics']] == [topic_id]
-            assert after['pending_lessons'] == []
+            resp = (await client.get(f'/play/topics/{child_id}')).json()
+            assert [item['id'] for item in resp['topics']] == [topic_id]
+            assert resp['topics'][0]['is_unlocked'] is True
+            # Session starts immediately without needing /approve
+            session_res = await client.post('/sessions/start-or-resume', json={'child_id': child_id, 'topic_id': topic_id})
+            assert session_res.status_code == 200
+            assert "session_id" in session_res.json()
     finally:
         app.dependency_overrides.clear()
         await db.close()
@@ -214,14 +209,10 @@ async def test_parent_regeneration_preserves_approved_bundle_and_questions():
             new_id=response.json()['topic_id']
             assert new_id!=old_id
             new_topic=(await client.get(f'/topics/{new_id}')).json()
-            assert new_topic['version']==2 and new_topic['status']=='needs_review'
-            live=(await client.get(f'/play/topics/{child_id}')).json()['topics']
-            assert [topic['id'] for topic in live]==[old_id]
-            assert (await client.get(f'/play/topics/{child_id}')).json()['pending_lessons'] == []
-            approved=await client.post(f'/topics/{new_id}/approve')
-            assert approved.status_code==200
+            assert new_topic['version']==2 and new_topic['status']=='approved'
             live=(await client.get(f'/play/topics/{child_id}')).json()['topics']
             assert [topic['id'] for topic in live]==[new_id]
+            assert (await client.get(f'/play/topics/{child_id}')).json()['pending_lessons'] == []
         after_bundle=dict(await (await db.execute('SELECT * FROM lesson_bundles WHERE topic_id=?',(old_id,))).fetchone())
         after_questions=[dict(row) for row in await (await db.execute('SELECT * FROM questions WHERE topic_id=? ORDER BY id',(old_id,))).fetchall()]
         assert before_bundle==after_bundle and before_questions==after_questions

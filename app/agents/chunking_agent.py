@@ -11,6 +11,7 @@ from app.models.schemas import (
 )
 from app.agents.loop import run_agent_loop, log_agent_step
 from app.agents.tools import split_sections
+from app.services.pdf_ncert import find_running_headers_and_footers, is_toc_page_text
 
 CHUNKING_AGENT_TOOLS = [
     {
@@ -153,98 +154,86 @@ def extract_curriculum_structure(
     subject_tag: str
 ) -> CurriculumHierarchySubmission:
     """
-    Deterministically parses document pages to extract authentic chapters and sub-topics.
-    Handles explicit chapter headers ('Chapter 1: ...'), section codes ('1.1 ...'),
-    colon headings ('Looking at Brick Patterns:'), and single-chapter textbooks.
+    Pass 1: Entire document scan to discover all chapter/unit boundaries.
+    Handles explicit chapter headers ('Chapter 1: ...', 'Unit 1: ...', '1. Together We Can'),
+    multi-line headings ('Unit 1: My Land\\n1. Together We Can'), ToC listings, and running header filtering.
+    Pass 2: Content-aware pedagogical section chunking per chapter.
     """
-    chap_re = re.compile(r'^(?:Chapter|Unit|Lesson)\s*(\d+)[:\s\.\-]+([^\n\r]+)', re.IGNORECASE)
-    topic_re = re.compile(r'^(?:(?:Topic\s*)?(\d+\.\d+)[:\s\-]+([^\n\r]+))', re.IGNORECASE)
-    colon_heading_re = re.compile(r'^([A-Z][A-Za-z0-9\s,\-]{2,45}):\s*([A-Z].*)?$')
-
-    content_pages = [p for p in pages_rows if not is_toc_page(p['text'])]
+    running_headers = find_running_headers_and_footers(pages_rows)
+    content_pages = [p for p in pages_rows if not is_toc_page_text(p["text"])]
     if not content_pages:
         content_pages = pages_rows
 
+    chap_re = re.compile(r'^(?:Chapter|Unit|Lesson|Theme|Part)\s*(\d+)(?:[:\s\.\-–—]+([^\n\r]+))?$', re.IGNORECASE)
+    num_title_re = re.compile(r'^(\d+)[\.\s\-–—]+([A-Z][A-Za-z0-9\s,\-–—\']{2,60})$')
+
     detected_chapters = []
-    current_chap = None
 
     for p in content_pages:
         p_num = p['page_number']
-        lines = clean_page_lines(p['text'])
+        raw_lines = [l.strip() for l in p['text'].splitlines() if l.strip()]
+        clean_lines = []
+        for l in raw_lines:
+            norm = re.sub(r'\s+', ' ', l).strip().lower()
+            if norm in running_headers:
+                continue
+            if re.match(r'^(?:page\s*)?\d+$', l, re.IGNORECASE):
+                continue
+            clean_lines.append(l)
 
-        # Check if page introduces a Chapter
+        # Inspect top lines of page for chapter boundaries
         chap_match = None
-        for idx, line in enumerate(lines[:6]):
-            m = chap_re.search(line)
+        for idx, line in enumerate(clean_lines[:6]):
+            m = chap_re.match(line)
+            nm = num_title_re.match(line)
             if m:
-                chap_match = (m, idx)
+                c_num = int(m.group(1))
+                c_title = m.group(2).strip() if m.group(2) else ""
+                # Check next lines for story title or sub-title
+                for next_line in clean_lines[idx+1:idx+4]:
+                    sm = num_title_re.match(next_line)
+                    if sm and not re.match(r'^(?:let us|activity|exercise|problem)\b', next_line, re.IGNORECASE):
+                        story_title = sm.group(2).strip()
+                        c_title = story_title or c_title
+                        break
+                    elif not c_title and len(next_line.split()) <= 8 and not re.match(r'^(?:let us|activity|exercise|problem)\b', next_line, re.IGNORECASE):
+                        c_title = next_line
+                        break
+                chap_match = (c_num, c_title or f"Chapter {c_num}")
                 break
+            elif nm:
+                c_num = int(nm.group(1))
+                c_title = nm.group(2).strip()
+                # Check if this could be a chapter start
+                expected_num = (detected_chapters[-1]['chapter_number'] + 1) if detected_chapters else 1
+                if c_num == expected_num or (not detected_chapters and c_num == 1) or idx == 0:
+                    if not re.match(r'^(?:let us|activity|exercise|problem|worked example|try this)\b', c_title, re.IGNORECASE):
+                        chap_match = (c_num, c_title)
+                        break
 
         if chap_match:
-            m, c_idx = chap_match
-            c_num = int(m.group(1))
-            c_title = m.group(2).strip()
-            c_title = re.sub(r'[\.\s\d]+$', '', c_title).strip()
+            c_num, c_title = chap_match
+            c_title = re.sub(r'^(?:Chapter|Unit|Lesson|Theme|Part)\s*[\d\.\-:]+\s*', '', c_title, flags=re.IGNORECASE).strip()
+            c_title = re.sub(r'^\d+\.?\s*', '', c_title).strip()
+            c_title = re.sub(r'[:\s#*_\-]+$', '', c_title).strip()
+            if not c_title:
+                c_title = f"Chapter {c_num}"
 
-            if current_chap and current_chap['chapter_number'] == c_num and current_chap['chapter_title'].lower() == c_title.lower():
-                # Repeated chapter header on subsequent page of same chapter
+            if detected_chapters and detected_chapters[-1]['chapter_number'] == c_num and detected_chapters[-1]['chapter_title'].lower() == c_title.lower():
+                # Repeated header on subsequent page of the same chapter
                 pass
             else:
-                if current_chap:
-                    current_chap['end_page'] = p_num - 1
-                current_chap = {
+                if detected_chapters:
+                    detected_chapters[-1]['end_page'] = p_num - 1
+                detected_chapters.append({
                     'chapter_number': c_num,
                     'chapter_title': c_title,
                     'start_page': p_num,
                     'end_page': p_num,
                     'topics': []
-                }
-                detected_chapters.append(current_chap)
+                })
 
-        # Check for sub-topics on this page
-        for idx, line in enumerate(lines):
-            if chap_re.search(line):
-                continue
-
-            tm = topic_re.search(line)
-            if tm:
-                top_code = tm.group(1).strip()
-                top_title = tm.group(2).strip()
-                top_title = re.sub(r'[\.\s\d]+$', '', top_title).strip()
-                parts = top_code.split('.')
-                t_num = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else (len(current_chap['topics']) + 1 if current_chap else 1)
-
-                if current_chap:
-                    if not any(t['name'].lower() == top_title.lower() for t in current_chap['topics']):
-                        summ = extract_summary_from_lines(lines, idx)
-                        if not summ:
-                            summ = f"Explores foundational concepts and practical problems in {top_title}."
-                        current_chap['topics'].append({
-                            'topic_number': t_num,
-                            'name': top_title,
-                            'summary': summ,
-                            'start_page': p_num,
-                            'end_page': p_num
-                        })
-            else:
-                # Check colon heading (e.g. "Looking at Brick Patterns: ...")
-                cm = colon_heading_re.match(line)
-                if cm and current_chap:
-                    top_title = cm.group(1).strip()
-                    if not any(t['name'].lower() == top_title.lower() for t in current_chap['topics']):
-                        inline_text = cm.group(2).strip() if cm.group(2) else ""
-                        summ = inline_text if len(inline_text) >= 15 else extract_summary_from_lines(lines, idx)
-                        if not summ:
-                            summ = f"Key definitions and visual exercises for {top_title}."
-                        current_chap['topics'].append({
-                            'topic_number': len(current_chap['topics']) + 1,
-                            'name': top_title,
-                            'summary': summ,
-                            'start_page': p_num,
-                            'end_page': p_num
-                        })
-
-    # If no chapters detected, treat as single chapter
+    # If no chapters detected, treat entire content as single chapter
     if not detected_chapters:
         start_p = content_pages[0]['page_number']
         end_p = content_pages[-1]['page_number']
@@ -256,14 +245,10 @@ def extract_curriculum_structure(
             'topics': []
         }]
 
-    # Adjust end pages for chapters and topics (exclude trailing Answer Key / Appendix from last topic)
-    last_page = pages_rows[-1]['page_number']
-    for p in reversed(pages_rows):
-        if re.match(r'^\s*(?:answer key|answers|solutions|glossary)\s*[:\n]', p['text'], re.IGNORECASE):
-            last_page = max(1, p['page_number'] - 1)
-            break
-    detected_chapters[-1]['end_page'] = max(detected_chapters[-1]['start_page'], last_page)
+    # Adjust end page of the last chapter
+    detected_chapters[-1]['end_page'] = content_pages[-1]['page_number']
 
+    # Pass 2: Partition each chapter into sub-topics using content-aware split_sections
     for c in detected_chapters:
         c_pages = [p for p in content_pages if c['start_page'] <= p['page_number'] <= c['end_page']]
         section_topics = split_sections(c_pages, chapter_title=c['chapter_title'], chapter_number=c['chapter_number'])
@@ -275,7 +260,9 @@ def extract_curriculum_structure(
                 'start_page': st['start_page'],
                 'end_page': st['end_page'],
                 'decision_trace': st.get('decision_trace', ''),
-                'text': st['text'], 'word_count': st['word_count'], 'source_pages': st['source_pages']
+                'text': st['text'],
+                'word_count': st['word_count'],
+                'source_pages': st['source_pages']
             }
             for st in section_topics
         ]
@@ -301,7 +288,8 @@ async def run_textbook_chunking_agent(
     grade: int,
     subject_tag: str,
     db,
-    chapter_number: Optional[int] = None
+    chapter_number: Optional[int] = None,
+    is_fallback_title: bool = False
 ) -> Dict[str, Any]:
     """
     Executes Agent 1 (Textbook Chunking Agent):
@@ -419,16 +407,23 @@ async def run_textbook_chunking_agent(
     if not hierarchy_result.chapters:
         raise ValueError("Chapter not found in source text")
 
-    # Log trace decision lines for each chapter in plain words
+    # Log trace decision lines and boundary rules for each chapter in plain words
     step_ctr = 1
     for chapter in hierarchy_result.chapters:
         num_topics = len(chapter.topics)
-        decision_line = chapter.topics[0].decision_trace
+        decision_line = chapter.topics[0].decision_trace if chapter.topics else "No topics"
+        boundary_rules = [t.decision_trace for t in chapter.topics]
         try:
             await log_agent_step(
                 db, run_id, None, "chunking_agent", step_ctr, "split_sections",
-                {"chapter_number": chapter.chapter_number, "chapter_title": chapter.chapter_title, "topics_count": num_topics},
-                decision_line
+                {
+                    "chapter_number": chapter.chapter_number,
+                    "chapter_title": chapter.chapter_title,
+                    "topics_count": num_topics,
+                    "boundary_rules": boundary_rules,
+                    "sub_topics": [{"topic_number": t.topic_number, "name": t.name, "rule": t.decision_trace} for t in chapter.topics]
+                },
+                f"Chapter {chapter.chapter_number} ('{chapter.chapter_title}') partitioned into {num_topics} sub-topics. Boundary rules: {'; '.join(set(boundary_rules))}"
             )
             step_ctr += 1
         except Exception:
@@ -456,6 +451,9 @@ async def run_textbook_chunking_agent(
         topic_version = 1
         initial_status = 'chunked'
 
+    flag_val = 1 if is_fallback_title else 0
+    flag_reason_val = 'Title could not be extracted from content — used filename, please verify' if is_fallback_title else None
+
     # Persist topics hierarchically to topics table
     created_topics = []
     for chapter in hierarchy_result.chapters:
@@ -464,13 +462,13 @@ async def run_textbook_chunking_agent(
             await db.execute("""
                 INSERT INTO topics (
                     id, textbook_id, chapter_number, chapter_title, chapter_name,
-                    topic_number, name, description, subject_tag, start_page, end_page, status, version
+                    topic_number, name, description, subject_tag, start_page, end_page, status, version, flagged, flag_reason
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 top_id, textbook_id, chapter.chapter_number, chapter.chapter_title, chapter.chapter_title,
                 topic_item.topic_number, topic_item.name, topic_item.summary, hierarchy_result.subject_tag,
-                topic_item.start_page, topic_item.end_page, initial_status, topic_version
+                topic_item.start_page, topic_item.end_page, initial_status, topic_version, flag_val, flag_reason_val
             ))
 
             # Snapshot exact topic fragments in existing JSON; approved source links stay untouched.
@@ -491,7 +489,9 @@ async def run_textbook_chunking_agent(
                 "start_page": topic_item.start_page,
                 "end_page": topic_item.end_page,
                 "status": initial_status,
-                "version": topic_version, "word_count": topic_item.word_count, "text": topic_item.text
+                "version": topic_version, "word_count": topic_item.word_count, "text": topic_item.text,
+                "flagged": bool(flag_val),
+                "flag_reason": flag_reason_val
             })
 
     await db.commit()

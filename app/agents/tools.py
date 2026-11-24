@@ -105,9 +105,25 @@ def clean_child_friendly_title(raw_title: str) -> str:
     title = re.sub(r'[:\s#*_\-]+$', '', title).strip()
     return title if title else "Topic Overview"
 
+PEDAGOGICAL_MARKER_PATTERNS = [
+    r'^(?:let us|let\'s)\s+(?:recite|sing|read|listen|think|speak|talk|learn|write|do|play|explore|solve)\b',
+    r'^(?:think and (?:answer|write|discuss))\b',
+    r'^(?:say (?:it )?aloud|word (?:power|fun|building)|fun (?:time|with words))\b',
+    r'^(?:worked example|example|sample problem)\b',
+    r'^(?:activity\s*\d*|try this|try these|do this)\b',
+    r'^(?:exercise\s*[\d\.]*|practice time|check your progress|questions)\b',
+    r'^(?:picture reading|reading comprehension)\b',
+]
+PEDAGOGICAL_MARKER_RE = re.compile('|'.join(PEDAGOGICAL_MARKER_PATTERNS), re.IGNORECASE)
+
+def is_pedagogical_marker(line: str) -> bool:
+    """Detects pedagogical activity and section markers across NCERT language and STEM."""
+    clean = line.strip()
+    return bool(PEDAGOGICAL_MARKER_RE.search(clean))
+
 def is_example_or_worked_problem(line: str) -> bool:
-    """Detects start of an example or worked problem that must never be split."""
-    return bool(re.search(r'^(?:Worked Example|Example|Problem|Try This|Activity|Let us Solve)\b', line.strip(), re.IGNORECASE))
+    """Detects start of an example, activity or worked problem that must never be split."""
+    return bool(re.search(r'^(?:Worked Example|Example|Problem|Try This|Try These|Activity|Let us Solve)\b', line.strip(), re.IGNORECASE))
 
 def is_heading_line(line: str) -> bool:
     """Detects whether a line represents a heading or sub-heading."""
@@ -156,74 +172,144 @@ def split_sections(pages, chapter_title="", chapter_number=1):
         return []
     title = clean_child_friendly_title(chapter_title) if chapter_title else "Chapter Overview"
     total = sum(count_words(p["text"]) for p in pages)
-    small = len(pages) <= settings.SMALL_CHAPTER_MAX_PAGES or total <= settings.SMALL_CHAPTER_MAX_WORDS
-    blocks = []
-    heading = title
-    paragraphs = []
+
+    # 1. First parse pages into blocks respecting worked examples, headings, and pedagogical markers
+    raw_blocks = []
+    current_heading = title
+    current_paragraphs = []
+    current_rule = "chapter_start"
     example = False
 
     def flush_block():
-        nonlocal paragraphs
-        if paragraphs:
-            blocks.append({"heading": heading, "paragraphs": paragraphs,
-                           "words": sum(count_words(p["text"]) for p in paragraphs)})
-            paragraphs = []
+        nonlocal current_paragraphs, current_heading, current_rule
+        if current_paragraphs:
+            words = sum(count_words(p["text"]) for p in current_paragraphs)
+            raw_blocks.append({
+                "heading": current_heading,
+                "paragraphs": current_paragraphs,
+                "words": words,
+                "rule": current_rule
+            })
+            current_paragraphs = []
 
-    if not small:
-        for page in pages:
-            lines = []
-            def flush_paragraph():
-                nonlocal lines
-                if lines:
-                    text = "\n".join(lines)
-                    fragment = {"page_number": page["page_number"], "text": text}
-                    # Worked examples remain atomic across paragraphs and page turns.
-                    if example and paragraphs and paragraphs[-1].get("example"):
-                        paragraphs[-1]["fragments"].append(fragment)
-                        paragraphs[-1]["text"] += "\n\n" + text
-                        paragraphs[-1]["words"] = count_words(paragraphs[-1]["text"])
-                    else:
-                        paragraphs.append({**fragment, "fragments": [fragment], "example": example,
-                                           "words": count_words(text)})
-                    lines = []
-            for raw in page["text"].splitlines():
-                line = raw.strip()
-                if not line:
-                    flush_paragraph()
-                elif is_example_or_worked_problem(line):
-                    flush_paragraph()
-                    example = False
-                    # A new example starts a new atomic item.
-                    paragraphs.append({"page_number": page["page_number"], "text": line,
-                                       "fragments": [{"page_number": page["page_number"], "text": line}],
-                                       "example": True, "words": count_words(line)})
-                    example = True
-                elif is_heading_line(line):
-                    flush_paragraph()
-                    flush_block()
-                    heading = clean_child_friendly_title(line)
-                    example = False
-                    lines.append(line)
+    for page in pages:
+        lines = []
+        def flush_paragraph():
+            nonlocal lines, example
+            if lines:
+                text = "\n".join(lines)
+                fragment = {"page_number": page["page_number"], "text": text}
+                if example and current_paragraphs and current_paragraphs[-1].get("example"):
+                    current_paragraphs[-1]["fragments"].append(fragment)
+                    current_paragraphs[-1]["text"] += "\n\n" + text
+                    current_paragraphs[-1]["words"] = count_words(current_paragraphs[-1]["text"])
                 else:
-                    lines.append(line)
-            flush_paragraph()
-        flush_block()
-        normalized = []
-        for block in blocks:
-            if block["words"] <= settings.TOPIC_MAX_WORDS:
-                normalized.append(block)
-                continue
-            parts = _partition_blocks(block["paragraphs"])
-            for i, part in enumerate(parts):
-                normalized.append({"heading": f"{block['heading']}, part {i + 1}/{len(parts)}",
-                                   "paragraphs": part, "words": sum(p["words"] for p in part)})
-        groups = _partition_blocks(normalized) if normalized else []
-    else:
-        groups = [[{"heading": title, "paragraphs": [
-            {"fragments": [dict(p)], "text": p["text"], "words": count_words(p["text"])} for p in pages
-        ]}]]
+                    current_paragraphs.append({
+                        **fragment,
+                        "fragments": [fragment],
+                        "example": example,
+                        "words": count_words(text)
+                    })
+                lines = []
 
-    trace = "Chapter is short, kept as one topic" if small else f"Chapter is long, split into {len(groups)} topics"
+        for raw in page["text"].splitlines():
+            line = raw.strip()
+            if not line:
+                flush_paragraph()
+            elif is_example_or_worked_problem(line):
+                flush_paragraph()
+                example = False
+                # A new example starts a new atomic item
+                current_paragraphs.append({
+                    "page_number": page["page_number"],
+                    "text": line,
+                    "fragments": [{"page_number": page["page_number"], "text": line}],
+                    "example": True,
+                    "words": count_words(line)
+                })
+                example = True
+            elif is_pedagogical_marker(line):
+                flush_paragraph()
+                flush_block()
+                current_heading = clean_child_friendly_title(line)
+                current_rule = f"pedagogical_marker: '{line}'"
+                example = False
+                lines.append(line)
+            elif is_heading_line(line):
+                flush_paragraph()
+                flush_block()
+                current_heading = clean_child_friendly_title(line)
+                current_rule = f"heading: '{line}'"
+                example = False
+                lines.append(line)
+            else:
+                lines.append(line)
+        flush_paragraph()
+    flush_block()
+
+    # 2. Check how many distinct pedagogical markers were found
+    marker_blocks = [b for b in raw_blocks if b.get("rule", "").startswith("pedagogical_marker")]
+
+    # If chapter has multiple distinct pedagogical activity sections (e.g. Let us Recite, Let us Think, etc.)
+    if len(marker_blocks) >= 2:
+        # Merge micro-sections (< 15 words) into adjacent block
+        merged_blocks = []
+        for b in raw_blocks:
+            if not merged_blocks:
+                merged_blocks.append(b)
+            elif b["words"] < 15:
+                # Merge micro-section with previous block
+                prev = merged_blocks[-1]
+                prev["paragraphs"].extend(b["paragraphs"])
+                prev["words"] += b["words"]
+            elif merged_blocks[-1]["words"] < 15:
+                # Previous block was micro-section, merge into current
+                prev = merged_blocks.pop()
+                b["paragraphs"] = prev["paragraphs"] + b["paragraphs"]
+                b["words"] += prev["words"]
+                merged_blocks.append(b)
+            else:
+                merged_blocks.append(b)
+
+        # Normalize large blocks if any
+        normalized = []
+        for block in merged_blocks:
+            if block["words"] <= settings.TOPIC_MAX_WORDS:
+                normalized.append([block])
+            else:
+                parts = _partition_blocks(block["paragraphs"])
+                for i, part in enumerate(parts):
+                    normalized.append([{
+                        "heading": f"{block['heading']}, part {i + 1}/{len(parts)}",
+                        "paragraphs": part,
+                        "words": sum(p["words"] for p in part),
+                        "rule": f"{block['rule']} (part {i + 1}/{len(parts)})"
+                    }])
+        groups = normalized
+        trace_default = f"Split by pedagogical activity markers into {len(groups)} topics"
+
+    else:
+        # Fallback to length-based heuristic
+        small = len(pages) <= settings.SMALL_CHAPTER_MAX_PAGES or total <= settings.SMALL_CHAPTER_MAX_WORDS
+        if small:
+            groups = [[{"heading": title, "paragraphs": [
+                {"fragments": [dict(p)], "text": p["text"], "words": count_words(p["text"])} for p in pages
+            ], "rule": "Chapter is short, kept as one topic"}]]
+            trace_default = "Chapter is short, kept as one topic"
+        else:
+            normalized = []
+            for block in raw_blocks:
+                if block["words"] <= settings.TOPIC_MAX_WORDS:
+                    normalized.append(block)
+                    continue
+                parts = _partition_blocks(block["paragraphs"])
+                for i, part in enumerate(parts):
+                    normalized.append({"heading": f"{block['heading']}, part {i + 1}/{len(parts)}",
+                                       "paragraphs": part, "words": sum(p["words"] for p in part),
+                                       "rule": f"{block.get('rule', 'heading')} (part {i + 1}/{len(parts)})"})
+            groups = _partition_blocks(normalized) if normalized else []
+            trace_default = f"Chapter is long, split into {len(groups)} topics"
+
     topics = []
     for i, group in enumerate(groups):
         fragments = [f for b in group for p in b["paragraphs"] for f in p["fragments"]]
@@ -232,10 +318,25 @@ def split_sections(pages, chapter_title="", chapter_number=1):
             page_text.setdefault(f["page_number"], []).append(f["text"])
         source = [{"page_number": num, "text": "\n\n".join(texts)} for num, texts in page_text.items()]
         text = "\n\n".join(p["text"] for p in source)
-        topic_heading = max(group, key=lambda block: sum(p["words"] for p in block["paragraphs"]))["heading"]
-        topics.append({"topic_number": i + 1, "chapter_number": chapter_number,
-                       "chapter_title": title, "name": topic_heading,
-                       "start_page": source[0]["page_number"], "end_page": source[-1]["page_number"],
-                       "text": text, "word_count": count_words(text), "source_pages": source,
-                       "summary": f"Explore {topic_heading} with examples and practice.", "decision_trace": trace})
+        best_block = max(group, key=lambda block: sum(p["words"] for p in block["paragraphs"]))
+        topic_heading = best_block["heading"]
+        rule_trace = best_block.get("rule", trace_default)
+        if len(groups) == 1 and trace_default == "Chapter is short, kept as one topic":
+            rule_trace = "Chapter is short, kept as one topic"
+        elif trace_default.startswith("Chapter is long"):
+            rule_trace = trace_default
+
+        topics.append({
+            "topic_number": i + 1,
+            "chapter_number": chapter_number,
+            "chapter_title": title,
+            "name": topic_heading,
+            "start_page": source[0]["page_number"],
+            "end_page": source[-1]["page_number"],
+            "text": text,
+            "word_count": count_words(text),
+            "source_pages": source,
+            "summary": f"Explore {topic_heading} with examples and practice.",
+            "decision_trace": rule_trace
+        })
     return topics

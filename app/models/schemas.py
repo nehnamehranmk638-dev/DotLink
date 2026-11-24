@@ -82,6 +82,8 @@ class TopicOut(BaseModel):
     version: Optional[int] = 1
     word_count: Optional[int] = None
     source_text: Optional[str] = None
+    flagged: Optional[bool] = False
+    flag_reason: Optional[str] = None
     created_at: str
 
 class SourcePageOut(BaseModel):
